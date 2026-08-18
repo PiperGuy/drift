@@ -1,0 +1,12 @@
+node_modules
+dist
+out
+release
+.DS_Store
+*.log
+*.log.*
+.eslintcache
+.env
+.env.*
+!.env.example
+coverage

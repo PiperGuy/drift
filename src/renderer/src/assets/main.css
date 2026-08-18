@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Plumbr Env palette, kept in step with the marketing site (theplumbr.com).
+   Lemon accent on a near-black canvas. Light mode uses the same accent with dark ink. */
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #0d0e10;
+  --card: #f6f7f8;
+  --card-foreground: #0d0e10;
+  --popover: #ffffff;
+  --popover-foreground: #0d0e10;
+  --primary: #c8ff4d;
+  --primary-foreground: #141a00;
+  --secondary: #eef0f2;
+  --secondary-foreground: #0d0e10;
+  --muted: #eef0f2;
+  --muted-foreground: #656a73;
+  --accent: #e6e8eb;
+  --accent-foreground: #0d0e10;
+  --destructive: #c73543;
+  --border: #e4e6ea;
+  --input: #d0d3d9;
+  --ring: #7aaa00;
+  --ok: #1f8f52;
+  --warn: #b06a00;
+  --bad: #c73543;
+  --sidebar: #f6f7f8;
+  --sidebar-foreground: #0d0e10;
+  --sidebar-primary: #c8ff4d;
+  --sidebar-primary-foreground: #141a00;
+  --sidebar-accent: #e6e8eb;
+  --sidebar-accent-foreground: #0d0e10;
+  --sidebar-border: #e4e6ea;
+  --sidebar-ring: #7aaa00;
+}
+
+.dark {
+  --background: #08090a;
+  --foreground: #f7f8f8;
+  --card: #0f1011;
+  --card-foreground: #f7f8f8;
+  --popover: #141516;
+  --popover-foreground: #f7f8f8;
+  --primary: #c8ff4d;
+  --primary-foreground: #141a00;
+  --secondary: #18191a;
+  --secondary-foreground: #f7f8f8;
+  --muted: #141516;
+  --muted-foreground: #8a8f98;
+  --accent: #1c1d1f;
+  --accent-foreground: #f7f8f8;
+  --destructive: #f0616d;
+  --border: #23252a;
+  --input: #34343a;
+  --ring: #c8ff4d;
+  --ok: #4cc38a;
+  --warn: #f2a541;
+  --bad: #f0616d;
+  --sidebar: #0f1011;
+  --sidebar-foreground: #f7f8f8;
+  --sidebar-primary: #c8ff4d;
+  --sidebar-primary-foreground: #141a00;
+  --sidebar-accent: #1c1d1f;
+  --sidebar-accent-foreground: #f7f8f8;
+  --sidebar-border: #23252a;
+  --sidebar-ring: #c8ff4d;
+}
+
+@theme inline {
+  --font-sans:
+    'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  /* Frameless-window drag region helpers */
+  .drag {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
