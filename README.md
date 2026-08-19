@@ -6,6 +6,8 @@ Plumbr Env is a local-first desktop app. It finds every `.env*` in a workspace y
 
 Marketing site and copy live in [PiperGuy/theplumbr](https://github.com/PiperGuy/theplumbr) (theplumbr.com). This repo is the app.
 
+Docs: [Features](docs/features.md) (everything the site promises, with status) and [System design](docs/system-design.md) (local-first architecture, storage, what needs a relay).
+
 ## Product rules (do not break these)
 
 - **Local-first.** Discovery, parsing and comparison run on the user's machine. There is no Plumbr server in the loop for core features.
