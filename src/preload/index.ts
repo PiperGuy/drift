@@ -7,7 +7,19 @@ const plumbr: PlumbrApi = {
   scanWorkspace: (req) => ipcRenderer.invoke(Channels.workspaceScan, req),
   envShape: (req) => ipcRenderer.invoke(Channels.envShape, req),
   compareEnv: (req) => ipcRenderer.invoke(Channels.envCompare, req),
-  appInfo: () => ipcRenderer.invoke(Channels.appInfo)
+  appInfo: () => ipcRenderer.invoke(Channels.appInfo),
+  recentWorkspace: () => ipcRenderer.invoke(Channels.workspaceRecent),
+  listHistory: () => ipcRenderer.invoke(Channels.historyList),
+  forgetData: () => ipcRenderer.invoke(Channels.dataForget),
+  clearCache: () => ipcRenderer.invoke(Channels.dataClear),
+  getSettings: () => ipcRenderer.invoke(Channels.settingsGet),
+  setSettings: (patch) => ipcRenderer.invoke(Channels.settingsSet, patch),
+  getLicense: () => ipcRenderer.invoke(Channels.licenseGet),
+  activateLicense: (key) => ipcRenderer.invoke(Channels.licenseActivate, key),
+  checkUpdates: () => ipcRenderer.invoke(Channels.updateCheck),
+  mcpClients: () => ipcRenderer.invoke(Channels.mcpClients),
+  mcpInstall: (id) => ipcRenderer.invoke(Channels.mcpInstall, id),
+  mcpUninstall: (id) => ipcRenderer.invoke(Channels.mcpUninstall, id)
 }
 
 contextBridge.exposeInMainWorld('plumbr', plumbr)

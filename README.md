@@ -1,8 +1,8 @@
-# Plumbr Env (desktop)
+# Drift by Plumbr (desktop)
 
 Stop copy-pasting secrets into every platform.
 
-Plumbr Env is a local-first desktop app. It finds every `.env*` in a workspace you grant, shows the drift between environments as redacted receipts, and syncs to GitHub, Vercel, AWS, Vault and the rest. Only when you approve the plan.
+Drift is Plumbr's local-first desktop app. It finds every `.env*` in a workspace you grant, shows the drift between environments as redacted receipts, and syncs to GitHub, Vercel, AWS, Vault and the rest. Only when you approve the plan.
 
 Marketing site and copy live in [PiperGuy/theplumbr](https://github.com/PiperGuy/theplumbr) (theplumbr.com). This repo is the app.
 
@@ -63,19 +63,19 @@ npm run build:mac | build:win | build:linux   # installers via electron-builder
 
 The website promises these. Everything below is either done, in progress or on the todo list.
 
-| Feature                       | Site copy                                                                                                                                                | Status                           |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                     |
-| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)           |
-| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)          |
-| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | todo                             |
-| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                             |
-| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                             |
-| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                             |
-| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | todo                             |
-| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo |
-| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                             |
-| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                             |
+| Feature                       | Site copy                                                                                                                                                | Status                                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                        |
+| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                              |
+| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                             |
+| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal |
+| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                |
+| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                |
+| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                |
+| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | todo                                                                |
+| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                    |
+| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                |
+| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                |
 
 ## Todo
 
@@ -138,3 +138,43 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 - Preload exposes only `window.plumbr` (see `src/shared/channels.ts`). Add a channel there, validate it in `src/main/ipc.ts` with zod, then use it.
 - Never send a raw value over IPC, log one, or put one in an error message. Fingerprints are HMAC-SHA256 with a per-session random key.
 - Never commit secrets. `.env*` is ignored.
+
+## Releasing
+
+```bash
+npm run release:patch   # or release:minor / release:major
+```
+
+`npm version` bumps `package.json`, commits `release: vX.Y.Z` and pushes the tag. The
+tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
+macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.AppImage`,
+`.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
+unsigned for now: macOS users open via right-click → Open the first time, Windows shows
+SmartScreen. `Actions → Release → Run workflow` builds the current branch without
+publishing; installers are attached to the run as artifacts.
+
+## MCP for coding agents
+
+The app bundles a stdio MCP server (`out/main/mcp.js`) that runs under the app binary with
+`ELECTRON_RUN_AS_NODE=1`, so nothing else needs installing. Open **Agents** in the app and copy
+the one-liner for Claude Code or the JSON for Cursor and friends. Tools: `list_projects`,
+`env_status`, `compare_env`, `dry_run_plan`. It reads only the workspace granted in the app,
+returns key names and drift classes, never values, and has no write or sync tool.
+
+## Licensing and trial
+
+Every install gets a 7-day trial, tracked in the local store. After that the window locks and
+main refuses every data IPC (the MCP server refuses tool calls too) until a key is entered in
+Settings → License. Keys are offline, Ed25519-signed, verified against the public key in
+`src/shared/license-pubkey.ts`. Nothing is sent anywhere.
+
+```bash
+node scripts/license.mjs keygen                         # once: writes the public key file, prints the private key
+export DRIFT_LICENSE_PRIVATE_KEY=…                      # keep this in a password manager, never in the repo
+node scripts/license.mjs issue customer@example.com 365 # a key valid for 365 days; omit days for perpetual
+```
+
+**Before the first public release, run `keygen` on your own machine and commit the new
+public key.** The pair in the repo today was generated during development. A local trial is
+bypassable by anyone willing to delete app data; a licence server is the upgrade path if that
+matters.

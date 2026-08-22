@@ -53,3 +53,32 @@ export const SKIP_DIRS = new Set([
   '.venv',
   '__pycache__'
 ])
+
+/**
+ * Canonical environment a file name maps to. Drives the per-project matrix
+ * in the workspace view. Decided from the file name only; contents are never
+ * consulted. Unknown suffixes (`.env.ci`, `.env.test`) fall under `other`.
+ */
+export const ENV_KINDS = [
+  'base',
+  'local',
+  'development',
+  'staging',
+  'preview',
+  'production',
+  'example',
+  'other'
+] as const
+export type EnvKind = (typeof ENV_KINDS)[number]
+
+export function envKind(name: string): EnvKind {
+  const suffix = name.replace(/^\.env\.?/, '').toLowerCase()
+  if (suffix === '') return 'base'
+  if (suffix === 'local' || suffix.endsWith('.local')) return 'local'
+  if (suffix === 'dev' || suffix === 'development') return 'development'
+  if (suffix === 'staging' || suffix === 'stage') return 'staging'
+  if (suffix === 'preview') return 'preview'
+  if (suffix === 'prod' || suffix === 'production') return 'production'
+  if (suffix === 'example' || suffix === 'sample' || suffix === 'template') return 'example'
+  return 'other'
+}

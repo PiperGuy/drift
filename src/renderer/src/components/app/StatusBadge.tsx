@@ -1,23 +1,28 @@
 import type { DriftStatus } from '@shared/drift'
-import { Badge } from '@/components/ui/badge'
+import { STATUS_META } from '@/lib/status'
 import { cn } from '@/lib/utils'
 
-const TONE: Record<DriftStatus, string> = {
-  same: 'border-ok/40 text-ok',
-  changed: 'border-warn/40 text-warn',
-  missing: 'border-bad/40 text-bad',
-  extra: 'border-warn/40 text-warn',
-  blank: 'border-muted-foreground/40 text-muted-foreground',
-  ignored: 'border-border text-muted-foreground'
-}
-
-export function StatusBadge({ status }: { status: DriftStatus }): React.JSX.Element {
+export function StatusBadge({
+  status,
+  className
+}: {
+  status: DriftStatus
+  className?: string
+}): React.JSX.Element {
+  const m = STATUS_META[status]
   return (
-    <Badge
-      variant="outline"
-      className={cn('font-mono text-[11px] uppercase tracking-wide', TONE[status])}
+    <span
+      title={m.hint}
+      className={cn(
+        'inline-flex h-5 items-center gap-1 rounded-sm border px-1.5 font-mono text-[11px] tracking-wide uppercase',
+        m.tone,
+        className
+      )}
     >
-      {status}
-    </Badge>
+      <span aria-hidden="true" className="w-2 text-center">
+        {m.glyph}
+      </span>
+      {m.label}
+    </span>
   )
 }

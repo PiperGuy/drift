@@ -1,7 +1,20 @@
-/** The "D" mark from theplumbr.com: dark tile, lemon stroke and bars. */
-export function Logo({ size = 24 }: { size?: number }): React.JSX.Element {
+/** The "D" mark from theplumbr.com: dark tile, lemon stroke and bars.
+ *  `draw` plays a one-shot stroke-on entrance (bars draw, dot pops). */
+export function Logo({
+  size = 24,
+  draw = false
+}: {
+  size?: number
+  draw?: boolean
+}): React.JSX.Element {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      className={draw ? 'logo-draw' : undefined}
+    >
       <rect width="32" height="32" rx="8" fill="#141a00" />
       <rect
         x="0.5"
@@ -15,6 +28,7 @@ export function Logo({ size = 24 }: { size?: number }): React.JSX.Element {
       />
       <path
         d="M8 10h16M8 16h9M8 22h16"
+        pathLength={1}
         stroke="#c8ff4d"
         strokeWidth="2.4"
         strokeLinecap="round"

@@ -1,6 +1,7 @@
 import { Moon, Sun } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
+import { transitionTheme } from '@/lib/theme'
 
 export function ThemeToggle(): React.JSX.Element {
   const { resolvedTheme, setTheme } = useTheme()
@@ -11,7 +12,7 @@ export function ThemeToggle(): React.JSX.Element {
       size="icon"
       className="no-drag"
       aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-      onClick={() => setTheme(dark ? 'light' : 'dark')}
+      onClick={() => transitionTheme(setTheme, dark ? 'light' : 'dark')}
     >
       {dark ? <Sun /> : <Moon />}
     </Button>

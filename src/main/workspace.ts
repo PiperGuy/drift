@@ -9,8 +9,15 @@ import type { EnvFileInfo, ScanResult } from '@shared/channels'
  */
 const granted = new Set<string>()
 
+/** One root at a time: choosing a new folder revokes the previous grant, as the onboarding copy promises. */
 export function grantRoot(root: string): void {
+  granted.clear()
   granted.add(resolve(root))
+}
+
+/** Drop every grant. Used when the user forgets the workspace. */
+export function revokeRoots(): void {
+  granted.clear()
 }
 
 export function isGranted(path: string): boolean {
