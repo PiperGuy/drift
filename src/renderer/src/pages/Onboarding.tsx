@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -96,6 +96,7 @@ export function OnboardingPage(): React.JSX.Element {
     root,
     scan,
     scanning,
+    error,
     grant,
     left,
     right,
@@ -111,14 +112,20 @@ export function OnboardingPage(): React.JSX.Element {
   }, [])
 
   const pair = useMemo(() => (scan ? suggestPair(scan.files) : null), [scan])
-  // Arriving at step 2 with a scan but no pair picked: pick the suggestion and compare once.
+  // Arriving at step 2 without a complete pair: apply the suggestion (replacing a half-picked one).
   useEffect(() => {
-    if (step !== 2 || !pair || left || right) return
+    if (step !== 2 || !pair || (left && right)) return
     pick('left', pair[0])
     pick('right', pair[1])
   }, [step, pair, left, right, pick])
+  // Compare once per pair. A failure shows the error instead of retrying forever.
+  const tried = useRef<string | null>(null)
   useEffect(() => {
-    if (step === 2 && left && right && !receipt && !comparing) void compare()
+    if (step !== 2 || !left || !right || receipt || comparing) return
+    const id = `${left.path}→${right.path}`
+    if (tried.current === id) return
+    tried.current = id
+    void compare()
   }, [step, left, right, receipt, comparing, compare])
 
   const finish = async (to: 'workspace' | 'receipt' = 'workspace'): Promise<void> => {
@@ -244,6 +251,14 @@ export function OnboardingPage(): React.JSX.Element {
                 )}
               </div>
               {scanning && <div className="scanline mt-4" aria-hidden="true" />}
+              {error && !scanning && (
+                <p
+                  role="alert"
+                  className="mt-4 rounded-md border border-bad/30 bg-bad-soft px-3 py-2 text-xs text-bad"
+                >
+                  {error}. Try a different folder, or one you have permission to read.
+                </p>
+              )}
               {scan && !scanning && (
                 <div className="mt-6 grid grid-cols-3 gap-3" style={i(6)}>
                   {[
@@ -281,6 +296,14 @@ export function OnboardingPage(): React.JSX.Element {
                     shown.
                   </Lead>
                   {comparing && <div className="scanline mt-4" aria-hidden="true" />}
+                  {error && !comparing && (
+                    <p
+                      role="alert"
+                      className="mt-4 rounded-md border border-bad/30 bg-bad-soft px-3 py-2 text-xs text-bad"
+                    >
+                      {error}
+                    </p>
+                  )}
                   {receipt && (
                     <div className="mt-6 flex flex-wrap gap-2" style={i(4)}>
                       <div
