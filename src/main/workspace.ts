@@ -9,7 +9,9 @@ import type { EnvFileInfo, ScanResult } from '@shared/channels'
  */
 const granted = new Set<string>()
 
+/** One root at a time: choosing a new folder revokes the previous grant, as the onboarding copy promises. */
 export function grantRoot(root: string): void {
+  granted.clear()
   granted.add(resolve(root))
 }
 

@@ -63,19 +63,19 @@ npm run build:mac | build:win | build:linux   # installers via electron-builder
 
 The website promises these. Everything below is either done, in progress or on the todo list.
 
-| Feature                       | Site copy                                                                                                                                                | Status                           |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                     |
-| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)           |
-| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)          |
-| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | todo                             |
-| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                             |
-| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                             |
-| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                             |
-| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | todo                             |
-| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo |
-| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                             |
-| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                             |
+| Feature                       | Site copy                                                                                                                                                | Status                                                              |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                        |
+| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                              |
+| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                             |
+| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal |
+| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                |
+| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                |
+| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                |
+| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | todo                                                                |
+| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                    |
+| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                |
+| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                |
 
 ## Todo
 
