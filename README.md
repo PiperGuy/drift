@@ -152,3 +152,11 @@ macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.
 unsigned for now: macOS users open via right-click → Open the first time, Windows shows
 SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
+
+## MCP for coding agents
+
+The app bundles a stdio MCP server (`out/main/mcp.js`) that runs under the app binary with
+`ELECTRON_RUN_AS_NODE=1`, so nothing else needs installing. Open **Agents** in the app and copy
+the one-liner for Claude Code or the JSON for Cursor and friends. Tools: `list_projects`,
+`env_status`, `compare_env`, `dry_run_plan`. It reads only the workspace granted in the app,
+returns key names and drift classes, never values, and has no write or sync tool.

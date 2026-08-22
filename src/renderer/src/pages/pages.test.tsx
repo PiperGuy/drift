@@ -77,7 +77,12 @@ const plumbr: PlumbrApi = {
     node: '24',
     chrome: '1',
     dataPath: '/tmp/plumbr.db',
-    keyPersisted: true
+    keyPersisted: true,
+    mcp: {
+      command: '/app/drift',
+      args: ['/app/out/main/mcp.js', '--db', '/tmp/plumbr.db'],
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    }
   }))
 }
 

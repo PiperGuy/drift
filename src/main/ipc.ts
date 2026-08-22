@@ -76,6 +76,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     node: process.versions.node,
     chrome: process.versions.chrome,
     dataPath,
-    keyPersisted: fingerprintKeyPersisted()
+    keyPersisted: fingerprintKeyPersisted(),
+    mcp: {
+      command: process.execPath,
+      args: [join(__dirname, 'mcp.js'), '--db', dataPath],
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    }
   }))
 }

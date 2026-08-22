@@ -19,6 +19,7 @@ import { ReceiptPage } from '@/pages/Receipt'
 import { PlannedPage } from '@/pages/Planned'
 import { SettingsPage } from '@/pages/Settings'
 import { HistoryPage } from '@/pages/History'
+import { AgentsPage } from '@/pages/Agents'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { MAKER, PRODUCT } from '@shared/product'
@@ -29,13 +30,13 @@ type NavItem = { id: PageId; label: string; icon: LucideIcon }
 const LOCAL: NavItem[] = [
   { id: 'workspace', label: 'Workspace', icon: FolderSearch },
   { id: 'receipt', label: 'Receipt', icon: Receipt },
-  { id: 'history', label: 'History', icon: History }
+  { id: 'history', label: 'History', icon: History },
+  { id: 'agents', label: 'Agents', icon: Bot }
 ]
 /** Surfaces that exist on the site roadmap but are not implemented in this build. */
 const ROADMAP: NavItem[] = [
   { id: 'sync', label: 'Sync', icon: Upload },
-  { id: 'share', label: 'Share', icon: Link2 },
-  { id: 'agents', label: 'Agents', icon: Bot }
+  { id: 'share', label: 'Share', icon: Link2 }
 ]
 const ORDER: PageId[] = [...LOCAL, ...ROADMAP].map((n) => n.id).concat('settings')
 
@@ -264,18 +265,7 @@ export default function App(): React.JSX.Element {
               />
             )}
             {page === 'history' && <HistoryPage />}
-            {page === 'agents' && (
-              <PlannedPage
-                title="MCP for coding agents"
-                blurb="A local MCP server for Claude Code, Cursor and any MCP client: mismatch context and dry-run plans. Never values, never a sync. The context shape exists in code; the server does not."
-                points={[
-                  'Key names and mismatch classes',
-                  'Dry-run plans',
-                  'No values, ever',
-                  'Cannot execute a sync'
-                ]}
-              />
-            )}
+            {page === 'agents' && <AgentsPage />}
             {page === 'settings' && <SettingsPage />}
           </div>
         </main>

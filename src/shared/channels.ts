@@ -59,6 +59,8 @@ export type AppInfo = {
   dataPath: string
   /** False when the OS keyring is unavailable: fingerprints are then per-session only. */
   keyPersisted: boolean
+  /** How to launch the bundled MCP server: the app binary as Node, the server script, the store. */
+  mcp: { command: string; args: string[]; env: Record<string, string> }
 }
 
 export type ScanRequest = { root: string }
