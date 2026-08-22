@@ -138,3 +138,17 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 - Preload exposes only `window.plumbr` (see `src/shared/channels.ts`). Add a channel there, validate it in `src/main/ipc.ts` with zod, then use it.
 - Never send a raw value over IPC, log one, or put one in an error message. Fingerprints are HMAC-SHA256 with a per-session random key.
 - Never commit secrets. `.env*` is ignored.
+
+## Releasing
+
+```bash
+npm run release:patch   # or release:minor / release:major
+```
+
+`npm version` bumps `package.json`, commits `release: vX.Y.Z` and pushes the tag. The
+tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
+macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.AppImage`,
+`.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
+unsigned for now: macOS users open via right-click → Open the first time, Windows shows
+SmartScreen. `Actions → Release → Run workflow` builds the current branch without
+publishing; installers are attached to the run as artifacts.

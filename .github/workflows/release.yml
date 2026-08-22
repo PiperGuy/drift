@@ -1,4 +1,7 @@
 name: Release
+# Tag push (npm run release:patch|minor|major) builds all three platforms and
+# uploads the installers to a draft GitHub Release named after the tag.
+# workflow_dispatch builds without publishing; installers land as run artifacts.
 on:
   push:
     tags: ['v*']
@@ -25,7 +28,8 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm run ${{ matrix.script }}
+      - run: npm run check
+      - run: npm run ${{ matrix.script }} -- --publish onTagOrDraft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
