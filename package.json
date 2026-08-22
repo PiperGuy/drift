@@ -12,7 +12,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "npm run build:mcp && electron-vite dev",
     "start": "electron-vite preview",
     "build": "npm run typecheck && electron-vite build && npm run build:mcp",
     "build:unpack": "npm run build && electron-builder --dir",

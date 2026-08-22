@@ -84,13 +84,16 @@ async function readJson(file: string): Promise<Record<string, unknown>> {
 }
 
 const tomlHeader = `[mcp_servers.${NAME}]`
+/** Our header line, allowing whitespace and a trailing comment. */
+const isHeader = (line: string): boolean =>
+  new RegExp(`^\\s*\\[mcp_servers\\.${NAME}\\]\\s*(#.*)?$`).test(line)
 /** Remove our table: from our header line up to the next line that starts a table, or EOF. */
 function stripToml(text: string): string {
   const lines = text.split('\n')
   const out: string[] = []
   let skipping = false
   for (const line of lines) {
-    if (line.trim() === tomlHeader) {
+    if (isHeader(line)) {
       skipping = true
       continue
     }
@@ -120,7 +123,7 @@ export async function statusAll(
         const text = await readFile(file, 'utf8')
         installed =
           c.format === 'toml'
-            ? text.includes(tomlHeader)
+            ? text.split('\n').some(isHeader)
             : Boolean((JSON.parse(text)[c.format] as Record<string, unknown> | undefined)?.[NAME])
       } catch {
         /* missing or unreadable: not installed */
