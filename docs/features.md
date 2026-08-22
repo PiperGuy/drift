@@ -1,4 +1,4 @@
-# Plumbr Env features
+# Drift (Plumbr desktop) features
 
 Every feature the website (theplumbr.com) promises, what it means in the app, and how it runs. Source of truth for the copy is `lib/content.ts` in the `theplumbr` repo. Status is for the desktop app in this repo.
 

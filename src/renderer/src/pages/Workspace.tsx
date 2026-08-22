@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { UNGROUPED, useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { PRODUCT } from '@shared/product'
 
 const KIND_LABEL: Record<EnvKind, string> = {
   base: '.env',
@@ -77,7 +78,7 @@ function Onboarding({ grant }: { grant: () => void }): React.JSX.Element {
           Local-first · redacted by default
         </p>
         <h1 className="hero-title mt-2" style={{ '--i': 4 } as CSSProperties}>
-          Point Plumbr <span className="text-lemon-ink">Env</span> at a folder.
+          Point <span className="text-lemon-ink">{PRODUCT}</span> at a folder.
         </h1>
         <p
           className="mt-3 max-w-lg text-[15px] leading-relaxed text-muted-foreground"

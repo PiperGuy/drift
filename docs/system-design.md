@@ -1,4 +1,4 @@
-# Plumbr Env: high-level system design (local-first)
+# Drift (Plumbr desktop): high-level system design (local-first)
 
 Goal: everything runs on the user's machine. No Plumbr server in the loop for any core feature, no accounts, no telemetry. Integration credentials are stored locally, encrypted with OS-backed keys. The one exception is share links, which need a small relay. That trade-off is spelled out in section 6.
 

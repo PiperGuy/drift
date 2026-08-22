@@ -1,8 +1,8 @@
-# Plumbr Env (desktop)
+# Drift by Plumbr (desktop)
 
 Stop copy-pasting secrets into every platform.
 
-Plumbr Env is a local-first desktop app. It finds every `.env*` in a workspace you grant, shows the drift between environments as redacted receipts, and syncs to GitHub, Vercel, AWS, Vault and the rest. Only when you approve the plan.
+Drift is Plumbr's local-first desktop app. It finds every `.env*` in a workspace you grant, shows the drift between environments as redacted receipts, and syncs to GitHub, Vercel, AWS, Vault and the rest. Only when you approve the plan.
 
 Marketing site and copy live in [PiperGuy/theplumbr](https://github.com/PiperGuy/theplumbr) (theplumbr.com). This repo is the app.
 

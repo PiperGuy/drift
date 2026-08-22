@@ -49,7 +49,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.theplumbr.env')
+  electronApp.setAppUserModelId('com.theplumbr.drift')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc(() => mainWindow)
   createWindow()

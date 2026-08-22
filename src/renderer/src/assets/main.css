@@ -3,7 +3,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Plumbr Env palette, kept in step with the marketing site (theplumbr.com).
+/* Drift palette, kept in step with the marketing site (theplumbr.com).
    Lemon accent on a near-black canvas. Light mode uses the same accent with dark ink.
    Status colours are paired with a soft tint for chips and rows; every status also
    carries a glyph in the UI so colour is never the only cue. */

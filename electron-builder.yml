@@ -1,5 +1,5 @@
-appId: com.theplumbr.env
-productName: Plumbr Env
+appId: com.theplumbr.drift
+productName: Drift
 directories:
   buildResources: build
 files:
@@ -14,7 +14,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: plumbr-env
+  executableName: drift
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -24,7 +24,7 @@ mac:
   category: public.app-category.developer-tools
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSDocumentsFolderUsageDescription: Plumbr Env reads .env files inside workspace folders you grant.
+    - NSDocumentsFolderUsageDescription: Drift reads .env files inside workspace folders you grant.
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}

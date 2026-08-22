@@ -20,6 +20,7 @@ import { PlannedPage } from '@/pages/Planned'
 import { SettingsPage } from '@/pages/Settings'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { MAKER, PRODUCT } from '@shared/product'
 
 type NavItem = { id: PageId; label: string; icon: LucideIcon }
 
@@ -165,8 +166,11 @@ export default function App(): React.JSX.Element {
         >
           <Logo size={24} />
           {!collapsed && (
-            <span className="text-sm font-semibold tracking-tight whitespace-nowrap">
-              Plumbr <span className="text-lemon-ink">Env</span>
+            <span className="flex items-baseline gap-1.5 text-sm font-semibold tracking-tight whitespace-nowrap">
+              {PRODUCT}
+              <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
+                by {MAKER}
+              </span>
             </span>
           )}
         </div>

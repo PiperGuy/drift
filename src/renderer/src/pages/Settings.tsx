@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { transitionTheme } from '@/lib/theme'
+import { PRODUCT } from '@shared/product'
 import type { AppInfo } from '@shared/channels'
 import { DEFAULT_IGNORE } from '@/store/workspace'
 import { cn } from '@/lib/utils'
@@ -89,7 +90,7 @@ export function SettingsPage(): React.JSX.Element {
         </h2>
         <div className="divide-y border-y">
           <Row label="Version">
-            <span className="font-mono text-xs">{info ? `Plumbr Env ${info.version}` : '…'}</span>
+            <span className="font-mono text-xs">{info ? `${PRODUCT} ${info.version}` : '…'}</span>
           </Row>
           <Row label="Runtime">
             <span className="font-mono text-xs text-muted-foreground">
