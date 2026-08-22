@@ -41,12 +41,13 @@ export function licenseState(
   opts: { key: string | null; trialStartedAt: number; lastSeen: number },
   now = Date.now()
 ): LicenseState {
-  if (now < opts.lastSeen - 86_400_000) return { state: 'expired', reason: 'clock' }
+  // A valid key always wins, so entering one recovers a clock lock.
   if (opts.key) {
     const p = verifyLicense(opts.key, now)
     if (p) return { state: 'licensed', name: p.n, expiresAt: p.e }
     return { state: 'expired', reason: 'license' }
   }
+  if (now < opts.lastSeen - 86_400_000) return { state: 'expired', reason: 'clock' }
   const endsAt = opts.trialStartedAt + TRIAL_MS
   if (now >= endsAt) return { state: 'expired', reason: 'trial' }
   return { state: 'trial', endsAt, daysLeft: Math.ceil((endsAt - now) / 86_400_000) }

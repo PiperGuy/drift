@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { copyFileSync } from 'node:fs'
 import {
   Channels,
   CompareRequest,
@@ -14,6 +15,7 @@ import {
   type UpdateResult
 } from '@shared/ipc'
 import { autoUpdater } from 'electron-updater'
+import log from 'electron-log/main'
 import { grantRoot, revokeRoots, scanWorkspace } from './workspace'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
@@ -31,9 +33,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   app.on('will-quit', () => store.close())
 
+  // The server script is copied next to the database on every launch, so the path
+  // clients store survives app updates and temporary AppImage mounts. The command is
+  // the AppImage itself on Linux (stable), the app binary elsewhere.
+  const mcpScript = join(app.getPath('userData'), 'mcp.js')
+  try {
+    copyFileSync(join(__dirname, 'mcp.js'), mcpScript)
+  } catch (e) {
+    log.warn('mcp.js not copied', e)
+  }
   const launch: McpLaunch = {
-    command: process.execPath,
-    args: [join(__dirname, 'mcp.js'), '--db', dataPath],
+    command: process.env['APPIMAGE'] ?? process.execPath,
+    args: [mcpScript, '--db', dataPath],
     env: { ELECTRON_RUN_AS_NODE: '1' }
   }
   // out/main → repo root in dev; app.asar → app.asar.unpacked (see asarUnpack) when packaged.
@@ -116,11 +127,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.dataClear, () => {
+    assertUnlocked(store)
     store.clearCache()
     store.logEvent('clear', {})
   })
 
   ipcMain.handle(Channels.dataForget, () => {
+    assertUnlocked(store)
     revokeRoots()
     store.forgetAll()
     store.logEvent('forget', {})

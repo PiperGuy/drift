@@ -26,9 +26,10 @@ a redacted receipt and keep it that way: do not ask the user to paste values int
 3. `compare_env`. Report `missing` and `blank` keys first: those break deploys. `changed` is
    expected between environments unless the key is configuration that should match. `extra`
    is informational; Drift never removes keys.
-4. Only if the user wants to act: `dry_run_plan`, then tell them to approve it **in the Drift
-   app**. You cannot apply it, and you should not try to edit `.env*` files to "fix" drift
-   yourself unless the user explicitly asks you to edit a specific file.
+4. Only if the user wants to act: `dry_run_plan` and present it as a checklist. Drift has no
+   apply step yet and you cannot sync anything; the user edits the target file themselves. Do
+   not edit `.env*` files to "fix" drift unless the user explicitly asks you to edit a
+   specific file, and never write a value you were not given in the conversation.
 
 ## Rules
 

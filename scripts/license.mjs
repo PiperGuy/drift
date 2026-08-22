@@ -27,6 +27,8 @@ if (cmd === 'keygen') {
 } else if (cmd === 'issue') {
   const [name, days] = rest
   if (!name) throw new Error('usage: issue <name-or-email> [days]')
+  if (days !== undefined && !(Number.isFinite(Number(days)) && Number(days) > 0))
+    throw new Error(`days must be a positive number, got ${JSON.stringify(days)}`)
   const priv = process.env.DRIFT_LICENSE_PRIVATE_KEY
   if (!priv) throw new Error('DRIFT_LICENSE_PRIVATE_KEY not set')
   const payload = {

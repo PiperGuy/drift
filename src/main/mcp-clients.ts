@@ -84,8 +84,21 @@ async function readJson(file: string): Promise<Record<string, unknown>> {
 }
 
 const tomlHeader = `[mcp_servers.${NAME}]`
-/** Our TOML block: from our header to the next table header or end of file. */
-const tomlBlock = new RegExp(`\\n?\\[mcp_servers\\.${NAME}\\][^\\[]*`, 'g')
+/** Remove our table: from our header line up to the next line that starts a table, or EOF. */
+function stripToml(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  let skipping = false
+  for (const line of lines) {
+    if (line.trim() === tomlHeader) {
+      skipping = true
+      continue
+    }
+    if (skipping && /^\s*\[/.test(line)) skipping = false
+    if (!skipping) out.push(line)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n')
+}
 
 function tomlEntry(l: McpLaunch): string {
   const s = (v: string): string => JSON.stringify(v)
@@ -135,7 +148,7 @@ export async function install(
     } catch {
       /* new file */
     }
-    await writeFile(file, text.replace(tomlBlock, '') + tomlEntry(launch))
+    await writeFile(file, stripToml(text) + tomlEntry(launch))
   } else {
     const cfg = await readJson(file)
     const servers = (cfg[c.format] ??= {}) as Record<string, unknown>
@@ -161,7 +174,7 @@ export async function uninstall(
   try {
     if (c.format === 'toml') {
       const text = await readFile(file, 'utf8')
-      await writeFile(file, text.replace(tomlBlock, ''))
+      await writeFile(file, stripToml(text))
     } else {
       const cfg = await readJson(file)
       const servers = cfg[c.format] as Record<string, unknown> | undefined
