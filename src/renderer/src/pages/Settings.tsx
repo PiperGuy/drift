@@ -67,6 +67,7 @@ export function SettingsPage(): React.JSX.Element {
   const license = useWorkspace((s) => s.license)
   const reset = useWorkspace((s) => s.reset)
   const setPage = useWorkspace((s) => s.setPage)
+  const setOnboarded = useWorkspace((s) => s.setOnboarded)
   useEffect(() => {
     window.plumbr.appInfo().then(setInfo)
     window.plumbr.getSettings().then(setSettings)
@@ -108,6 +109,15 @@ export function SettingsPage(): React.JSX.Element {
                 </button>
               ))}
             </div>
+          </Row>
+        </Section>
+
+        <Section title="Getting started">
+          <Row label="Tour">
+            <Button variant="outline" size="sm" onClick={() => setOnboarded(false)}>
+              Replay the onboarding
+            </Button>
+            <Hint>Access, first receipt, agents and shortcuts. Your data is untouched.</Hint>
           </Row>
         </Section>
 

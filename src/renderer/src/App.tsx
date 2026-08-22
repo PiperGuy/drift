@@ -21,6 +21,7 @@ import { SettingsPage } from '@/pages/Settings'
 import { HistoryPage } from '@/pages/History'
 import { AgentsPage } from '@/pages/Agents'
 import { Lock } from '@/components/app/Lock'
+import { OnboardingPage } from '@/pages/Onboarding'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { MAKER, PRODUCT } from '@shared/product'
@@ -42,7 +43,7 @@ const ROADMAP: NavItem[] = [
 const ORDER: PageId[] = [...LOCAL, ...ROADMAP].map((n) => n.id).concat('settings')
 
 const isMac = navigator.platform.startsWith('Mac')
-const MOD = isMac ? '⌘' : 'Ctrl'
+const MOD = isMac ? '⌘' : 'Ctrl+'
 
 function NavButton({
   id,
@@ -100,6 +101,7 @@ export default function App(): React.JSX.Element {
   const receipt = useWorkspace((s) => s.receipt)
   const paired = useWorkspace((s) => Boolean(s.left && s.right))
   const license = useWorkspace((s) => s.license)
+  const onboarded = useWorkspace((s) => s.onboarded)
   const collapsed = useWorkspace((s) => s.sidebarCollapsed)
   const toggleSidebar = useWorkspace((s) => s.toggleSidebar)
 
@@ -160,6 +162,8 @@ export default function App(): React.JSX.Element {
 
   // Trial over: the whole window is the lock screen. Main refuses data IPCs too.
   if (license?.state === 'expired') return <Lock reason={license.reason} />
+  // First run: the journey owns the whole window until finished or skipped.
+  if (onboarded === false) return <OnboardingPage />
 
   return (
     <div className="flex h-full">
