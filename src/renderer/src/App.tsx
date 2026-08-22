@@ -18,6 +18,7 @@ import { WorkspacePage } from '@/pages/Workspace'
 import { ReceiptPage } from '@/pages/Receipt'
 import { PlannedPage } from '@/pages/Planned'
 import { SettingsPage } from '@/pages/Settings'
+import { HistoryPage } from '@/pages/History'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { MAKER, PRODUCT } from '@shared/product'
@@ -27,13 +28,13 @@ type NavItem = { id: PageId; label: string; icon: LucideIcon }
 /** What runs on this machine today. */
 const LOCAL: NavItem[] = [
   { id: 'workspace', label: 'Workspace', icon: FolderSearch },
-  { id: 'receipt', label: 'Receipt', icon: Receipt }
+  { id: 'receipt', label: 'Receipt', icon: Receipt },
+  { id: 'history', label: 'History', icon: History }
 ]
 /** Surfaces that exist on the site roadmap but are not implemented in this build. */
 const ROADMAP: NavItem[] = [
   { id: 'sync', label: 'Sync', icon: Upload },
   { id: 'share', label: 'Share', icon: Link2 },
-  { id: 'history', label: 'History', icon: History },
   { id: 'agents', label: 'Agents', icon: Bot }
 ]
 const ORDER: PageId[] = [...LOCAL, ...ROADMAP].map((n) => n.id).concat('settings')
@@ -98,6 +99,11 @@ export default function App(): React.JSX.Element {
   const paired = useWorkspace((s) => Boolean(s.left && s.right))
   const collapsed = useWorkspace((s) => s.sidebarCollapsed)
   const toggleSidebar = useWorkspace((s) => s.toggleSidebar)
+
+  const init = useWorkspace((s) => s.init)
+  useEffect(() => {
+    void init()
+  }, [init])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -257,17 +263,7 @@ export default function App(): React.JSX.Element {
                 ]}
               />
             )}
-            {page === 'history' && (
-              <PlannedPage
-                title="Local history and audit trail"
-                blurb="Every change and every approved sync recorded on this machine. This build keeps nothing between launches: no database, no snapshots."
-                points={[
-                  'Per-file change log',
-                  'Approved sync records',
-                  'Roll back a file to a previous state'
-                ]}
-              />
-            )}
+            {page === 'history' && <HistoryPage />}
             {page === 'agents' && (
               <PlannedPage
                 title="MCP for coding agents"

@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { transitionTheme } from '@/lib/theme'
 import { PRODUCT } from '@shared/product'
+import { Button } from '@/components/ui/button'
 import type { AppInfo } from '@shared/channels'
-import { DEFAULT_IGNORE } from '@/store/workspace'
+import { useWorkspace, DEFAULT_IGNORE } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 
 const THEMES = [
@@ -24,6 +25,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
 export function SettingsPage(): React.JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const { theme, setTheme } = useTheme()
+  const reset = useWorkspace((s) => s.reset)
   useEffect(() => {
     window.plumbr.appInfo().then(setInfo)
   }, [])
@@ -32,7 +34,8 @@ export function SettingsPage(): React.JSX.Element {
       <div className="mx-auto max-w-2xl">
         <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Nothing on this page is persisted between launches yet, except the theme.
+          Theme and workspace are remembered. Everything stored is redacted: paths, key names and
+          counts, never a value.
         </p>
 
         <h2 className="mt-6 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
@@ -79,8 +82,39 @@ export function SettingsPage(): React.JSX.Element {
           </Row>
           <Row label="Fingerprints">
             <p className="text-xs text-muted-foreground">
-              HMAC-SHA256 with a random key generated at launch. Fingerprints only agree with each
-              other while the app runs and are useless for guessing a value afterwards.
+              {info?.keyPersisted
+                ? 'HMAC-SHA256 with a per-install key sealed by the OS keyring. Receipts stay comparable across launches and are useless off this machine.'
+                : 'HMAC-SHA256 with a random key generated at launch. No OS keyring is available, so fingerprints only agree with each other while the app runs.'}
+            </p>
+          </Row>
+        </div>
+
+        <h2 className="mt-6 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+          Data
+        </h2>
+        <div className="divide-y border-y">
+          <Row label="Location">
+            <code className="font-mono text-xs break-all">{info?.dataPath ?? '…'}</code>
+            <p className="mt-1 text-xs text-muted-foreground">
+              SQLite. Holds the granted root, redacted receipts and the history log.
+            </p>
+          </Row>
+          <Row label="Forget">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                if (!window.confirm('Forget the workspace, every receipt and the history log?'))
+                  return
+                await window.plumbr.forgetData()
+                reset()
+              }}
+            >
+              Forget workspace and history
+            </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Removes everything above. The fingerprint key stays, so nothing becomes less private
+              by keeping it.
             </p>
           </Row>
         </div>

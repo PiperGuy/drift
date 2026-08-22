@@ -11,7 +11,10 @@ export const Channels = {
   workspaceScan: 'workspace:scan',
   envShape: 'env:shape',
   envCompare: 'env:compare',
-  appInfo: 'app:info'
+  appInfo: 'app:info',
+  workspaceRecent: 'workspace:recent',
+  historyList: 'history:list',
+  dataForget: 'data:forget'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -36,12 +39,26 @@ export type ScanResult = {
 
 export type EnvShape = { path: string; name: string; entries: KeyEntry[] }
 
+/** Append-only, redacted audit trail. Subject and detail hold paths, key names and counts. Never a value. */
+export type HistoryKind = 'grant' | 'scan' | 'compare' | 'forget'
+export type HistoryEvent = {
+  id: number
+  at: number
+  kind: HistoryKind
+  subject: Record<string, unknown>
+  detail: Record<string, unknown>
+}
+
 export type AppInfo = {
   version: string
   platform: NodeJS.Platform
   electron: string
   node: string
   chrome: string
+  /** Where the local store lives. */
+  dataPath: string
+  /** False when the OS keyring is unavailable: fingerprints are then per-session only. */
+  keyPersisted: boolean
 }
 
 export type ScanRequest = { root: string }
@@ -55,4 +72,9 @@ export type PlumbrApi = {
   envShape: (req: ShapeRequest) => Promise<EnvShape>
   compareEnv: (req: CompareRequest) => Promise<DriftReceipt>
   appInfo: () => Promise<AppInfo>
+  /** Last granted root, re-granted for this session, or null on first run. */
+  recentWorkspace: () => Promise<string | null>
+  listHistory: () => Promise<HistoryEvent[]>
+  /** Wipe roots, receipts and history. Keeps the fingerprint key. */
+  forgetData: () => Promise<void>
 }

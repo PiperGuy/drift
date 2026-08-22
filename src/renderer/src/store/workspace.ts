@@ -48,6 +48,10 @@ type State = {
   receipt: DriftReceipt | null
   comparing: boolean
   setPage: (page: PageId) => void
+  /** Re-grant the remembered root and rescan. Called once at launch. */
+  init: () => Promise<void>
+  /** Back to first run. */
+  reset: () => void
   grant: () => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
@@ -83,6 +87,26 @@ export const useWorkspace = create<State>((set, get) => ({
   comparing: false,
 
   setPage: (page) => set({ page }),
+
+  init: async () => {
+    const root = await window.plumbr.recentWorkspace()
+    if (!root) return
+    set({ root })
+    await get().rescan()
+  },
+
+  reset: () =>
+    set({
+      root: null,
+      scan: null,
+      project: null,
+      summaries: {},
+      left: null,
+      right: null,
+      receipt: null,
+      error: null,
+      page: 'workspace'
+    }),
 
   grant: async () => {
     const root = await window.plumbr.pickWorkspace()

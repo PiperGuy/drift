@@ -67,12 +67,17 @@ const plumbr: PlumbrApi = {
       ignore
     )
   ),
+  recentWorkspace: vi.fn(async () => null),
+  listHistory: vi.fn(async () => []),
+  forgetData: vi.fn(async () => {}),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',
     electron: '43',
     node: '24',
-    chrome: '1'
+    chrome: '1',
+    dataPath: '/tmp/plumbr.db',
+    keyPersisted: true
   }))
 }
 

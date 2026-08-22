@@ -7,7 +7,10 @@ const plumbr: PlumbrApi = {
   scanWorkspace: (req) => ipcRenderer.invoke(Channels.workspaceScan, req),
   envShape: (req) => ipcRenderer.invoke(Channels.envShape, req),
   compareEnv: (req) => ipcRenderer.invoke(Channels.envCompare, req),
-  appInfo: () => ipcRenderer.invoke(Channels.appInfo)
+  appInfo: () => ipcRenderer.invoke(Channels.appInfo),
+  recentWorkspace: () => ipcRenderer.invoke(Channels.workspaceRecent),
+  listHistory: () => ipcRenderer.invoke(Channels.historyList),
+  forgetData: () => ipcRenderer.invoke(Channels.dataForget)
 }
 
 contextBridge.exposeInMainWorld('plumbr', plumbr)
