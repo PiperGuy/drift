@@ -1,14 +1,13 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * One-shot ambient canvas for onboarding: a lattice of redacted "key dashes" in
- * the brand lemon that drifts under the pointer and settles. Purely decorative,
+ * One-shot ambient canvas for onboarding: a quiet field of lemon dots that
+ * brightens under the pointer. Purely decorative,
  * reads its colours from the live CSS tokens so it follows light/dark, and
  * renders a single static frame under prefers-reduced-motion.
  *
- * Entrance (one-shot, ~1.6s): every dash starts scattered and converges on its
- * cell, rippling out from the centre, while a lemon scan beam sweeps top to bottom
- * once and lights the dashes it passes. The beam is the product in one gesture:
+ * Entrance (one-shot, ~1.6s): dots grow in, rippling out from the centre, while a
+ * lemon scan beam sweeps top to bottom once and lights the dots it passes. The beam is the product in one gesture:
  * a workspace being read, nothing being moved.
  */
 export function Lattice({ className }: { className?: string }): React.JSX.Element {
@@ -21,8 +20,7 @@ export function Lattice({ className }: { className?: string }): React.JSX.Elemen
     if (!canvas || !ctx || typeof ResizeObserver === 'undefined') return
 
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-    const CELL = 28
-    const DASH = 12
+    const CELL = 24
     let w = 0
     let h = 0
     let dpr = 1
@@ -58,9 +56,7 @@ export function Lattice({ className }: { className?: string }): React.JSX.Elemen
     const draw = (now: number): void => {
       const t = (now - t0) / 1000
       ctx.clearRect(0, 0, w, h)
-      ctx.strokeStyle = ink
-      ctx.lineCap = 'round'
-      ctx.lineWidth = 2
+      ctx.fillStyle = ink
       const cols = Math.ceil(w / CELL) + 1
       const rows = Math.ceil(h / CELL) + 1
       const maxD = Math.hypot(w, h) / 2
@@ -68,35 +64,23 @@ export function Lattice({ className }: { className?: string }): React.JSX.Elemen
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
           const r = seed(i, j)
-          const r2 = seed(j + 7, i + 3)
           const cx = i * CELL
           const cy = j * CELL
-          // Entrance: settle from a scattered offset, delayed by distance from centre.
+          // Entrance: fade and grow in, rippling out from the centre.
           const delay = reduce ? 0 : (Math.hypot(cx - w / 2, cy - h / 2) / maxD) * 0.5
           const p = reduce ? 1 : easeOut(Math.min(1, Math.max(0, (t - delay) / INTRO)))
-          const sx = cx + (r - 0.5) * 160 * (1 - p)
-          const sy = cy + (r2 - 0.5) * 160 * (1 - p)
-          const rot = (r2 - 0.5) * Math.PI * (1 - p)
-          // Gentle breathing, phase-offset per cell. Frozen at t=0 under reduced motion.
-          const breathe = reduce ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.8 + r * Math.PI * 2)
-          // Pointer lifts nearby dashes: brighter and wider within ~140px.
+          // Slow breathing, phase-offset per dot. Frozen under reduced motion.
+          const breathe = reduce ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.6 + r * Math.PI * 2)
+          // Pointer and beam lift nearby dots: brighter and larger.
           const near = Math.max(0, 1 - Math.hypot(cx - pointer.x, cy - pointer.y) / 140)
-          // Scan beam: a soft band ~36px tall lights what it passes.
-          const lit = Math.max(0, 1 - Math.abs(cy - beamY) / 36)
-          const len = DASH * (0.35 + 0.65 * r) * (1 + near * 0.6 + lit * 0.8)
-          const alpha = Math.min(
-            1,
-            ((0.1 + 0.16 * breathe * r) * gain + near * 0.5 + lit * 0.7) * (0.2 + 0.8 * p)
-          )
+          const lit = Math.max(0, 1 - Math.abs(cy - beamY) / 40)
+          const lift = Math.max(near, lit)
+          const radius = (1 + 0.4 * breathe + lift * 1.6) * p
+          const alpha = Math.min(1, ((0.14 + 0.12 * breathe) * gain + lift * 0.7) * p)
           ctx.globalAlpha = alpha
-          ctx.save()
-          ctx.translate(sx, sy)
-          ctx.rotate(rot)
           ctx.beginPath()
-          ctx.moveTo(-len / 2, 0)
-          ctx.lineTo(len / 2, 0)
-          ctx.stroke()
-          ctx.restore()
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+          ctx.fill()
         }
       }
       if (beamY > -1e3) {
