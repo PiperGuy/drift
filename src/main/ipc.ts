@@ -1,7 +1,7 @@
 import { app, dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { Channels, CompareRequest, ScanRequest, ShapeRequest, type AppInfo } from '@shared/ipc'
-import { grantRoot, scanWorkspace } from './workspace'
+import { grantRoot, revokeRoots, scanWorkspace } from './workspace'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
 
@@ -40,6 +40,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.historyList, () => store.listEvents())
 
   ipcMain.handle(Channels.dataForget, () => {
+    revokeRoots()
     store.forgetAll()
     store.logEvent('forget', {})
   })

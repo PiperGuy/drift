@@ -26,10 +26,18 @@ export function loadFingerprintKey(
   if (!seal.isEncryptionAvailable()) return (persisted = false)
   const sealed = read()
   if (sealed) {
-    key = Buffer.from(seal.decryptString(Buffer.from(sealed, 'base64')), 'base64')
-  } else {
-    write(seal.encryptString(key.toString('base64')).toString('base64'))
+    try {
+      const k = Buffer.from(seal.decryptString(Buffer.from(sealed, 'base64')), 'base64')
+      if (k.length === 32) {
+        key = k
+        return (persisted = true)
+      }
+    } catch {
+      // Keyring changed, data copied from another machine, or blob corrupt: fall through
+      // and seal a fresh key. Old receipts simply stop being comparable to new ones.
+    }
   }
+  write(seal.encryptString(key.toString('base64')).toString('base64'))
   return (persisted = true)
 }
 

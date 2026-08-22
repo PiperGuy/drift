@@ -15,6 +15,11 @@ export function grantRoot(root: string): void {
   granted.add(resolve(root))
 }
 
+/** Drop every grant. Used when the user forgets the workspace. */
+export function revokeRoots(): void {
+  granted.clear()
+}
+
 export function isGranted(path: string): boolean {
   const p = resolve(path)
   for (const root of granted) if (p === root || p.startsWith(root + sep)) return true
