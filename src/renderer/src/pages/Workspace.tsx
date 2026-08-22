@@ -42,51 +42,75 @@ const KIND_TONE: Record<EnvKind, string> = {
 /** The environments the product promises to show side by side. */
 const CANON: EnvKind[] = ['base', 'local', 'staging', 'preview', 'production']
 
+const FACTS: { k: string; t: string; d: string }[] = [
+  {
+    k: '01',
+    t: 'Scan reads',
+    d: 'File names, paths, sizes and modified times. Contents are never opened.'
+  },
+  {
+    k: '02',
+    t: 'Inspect reads',
+    d: 'Key names and a per-launch fingerprint of each value, in the main process. This window never receives a value.'
+  },
+  {
+    k: '03',
+    t: 'This build',
+    d: 'Compares two local files and describes a plan. It writes nothing and sends nothing.'
+  }
+]
+
 function Onboarding({ grant }: { grant: () => void }): React.JSX.Element {
   return (
     <div className="relative flex h-full items-center justify-center overflow-auto p-8">
-      <Lattice className="absolute inset-0 size-full [mask-image:radial-gradient(ellipse_at_center,transparent_30%,black_85%)]" />
-      <div className="stagger relative w-full max-w-lg">
-        <Logo size={36} />
-        <h1
-          className="mt-4 text-xl font-semibold tracking-tight"
-          style={{ '--i': 1 } as CSSProperties}
+      <Lattice className="absolute inset-0 size-full [mask-image:radial-gradient(ellipse_at_center,transparent_22%,black_80%)]" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 left-1/2 size-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl"
+      />
+      <div className="stagger relative w-full max-w-2xl">
+        <Logo size={48} draw />
+        <p
+          className="mt-6 font-mono text-[11px] tracking-[0.2em] text-lemon-ink uppercase"
+          style={{ '--i': 3 } as CSSProperties}
         >
-          Point Plumbr Env at a folder
+          Local-first · redacted by default
+        </p>
+        <h1 className="hero-title mt-2" style={{ '--i': 4 } as CSSProperties}>
+          Point Plumbr <span className="text-lemon-ink">Env</span> at a folder.
         </h1>
         <p
-          className="mt-1.5 text-sm leading-relaxed text-muted-foreground"
-          style={{ '--i': 2 } as CSSProperties}
+          className="mt-3 max-w-lg text-[15px] leading-relaxed text-muted-foreground"
+          style={{ '--i': 5 } as CSSProperties}
         >
-          It lists every <code className="font-mono">.env*</code> inside, grouped by Git project,
-          and leaves each file exactly where it is.
+          It lists every <code className="font-mono text-foreground">.env*</code> inside, grouped by
+          Git project, and leaves each file exactly where it is.
         </p>
-        <dl className="stagger mt-6 grid gap-3 text-sm" style={{ '--i': 3 } as CSSProperties}>
-          <div className="grid grid-cols-[7rem_1fr] gap-3" style={{ '--i': 4 } as CSSProperties}>
-            <dt className="text-muted-foreground">Scan reads</dt>
-            <dd>File names, paths, sizes and modified times. Contents are not opened.</dd>
-          </div>
-          <div className="grid grid-cols-[7rem_1fr] gap-3" style={{ '--i': 5 } as CSSProperties}>
-            <dt className="text-muted-foreground">Inspect reads</dt>
-            <dd>
-              Key names and a per-launch fingerprint of each value, computed in the main process.
-              The window you are looking at never receives a value.
-            </dd>
-          </div>
-          <div className="grid grid-cols-[7rem_1fr] gap-3" style={{ '--i': 6 } as CSSProperties}>
-            <dt className="text-muted-foreground">This build</dt>
-            <dd>
-              Compares two local files and describes a plan. It writes nothing and sends nothing.
-            </dd>
-          </div>
+        <dl
+          className="stagger mt-8 grid gap-3 sm:grid-cols-3"
+          style={{ '--i': 6 } as CSSProperties}
+        >
+          {FACTS.map((f, i) => (
+            <div
+              key={f.k}
+              className="elev rounded-lg border bg-card/80 p-4 backdrop-blur-sm"
+              style={{ '--i': 7 + i } as CSSProperties}
+            >
+              <dt className="flex items-center gap-2 text-[13px] font-medium">
+                <span className="font-mono text-[10px] text-lemon-ink">{f.k}</span>
+                {f.t}
+              </dt>
+              <dd className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{f.d}</dd>
+            </div>
+          ))}
         </dl>
-        <div className="mt-6 flex items-center gap-3" style={{ '--i': 7 } as CSSProperties}>
-          <Button onClick={grant} autoFocus className="press">
+        <div className="mt-8 flex items-center gap-4" style={{ '--i': 11 } as CSSProperties}>
+          <Button onClick={grant} autoFocus size="lg" className="press cta-pulse">
             <FolderOpen /> Choose a folder
           </Button>
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            <ShieldCheck className="size-3.5" aria-hidden="true" /> Only this folder is readable
-            afterwards
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only this folder
+            is readable afterwards
           </span>
         </div>
       </div>

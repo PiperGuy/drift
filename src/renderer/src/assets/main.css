@@ -287,6 +287,31 @@
     );
     background-size: 20px 20px;
   }
+  /* Logo entrance: bars draw on over 700ms, dot pops after. */
+  .logo-draw path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: draw-on 700ms var(--ease-out) 150ms forwards;
+  }
+  .logo-draw circle {
+    transform-box: fill-box;
+    transform-origin: center;
+    scale: 0;
+    animation: pop 320ms var(--ease-out) 800ms forwards;
+  }
+  /* Primary call to action: one lemon pulse after the hero settles, then still. */
+  .cta-pulse {
+    animation: pulse 1.2s var(--ease-out) 1.3s 1;
+  }
+  /* Hero type: large, tight, with the lemon word carrying the brand. */
+  .hero-title {
+    font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    font-weight: 650;
+    text-wrap: balance;
+  }
+
   /* Big numerals: tighter, heavier, tabular. */
   .numeral {
     font-variant-numeric: tabular-nums;
@@ -336,6 +361,30 @@
     opacity: 1;
     scale: 0.98;
     rotate: 0.5deg;
+  }
+}
+@keyframes draw-on {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes pop {
+  from {
+    scale: 0;
+  }
+  70% {
+    scale: 1.25;
+  }
+  to {
+    scale: 1;
+  }
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 70%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 18px transparent;
   }
 }
 @keyframes sweep {

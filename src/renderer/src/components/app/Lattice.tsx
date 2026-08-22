@@ -5,6 +5,11 @@ import { useEffect, useRef } from 'react'
  * the brand lemon that drifts under the pointer and settles. Purely decorative,
  * reads its colours from the live CSS tokens so it follows light/dark, and
  * renders a single static frame under prefers-reduced-motion.
+ *
+ * Entrance (one-shot, ~1.6s): every dash starts scattered and converges on its
+ * cell, rippling out from the centre, while a lemon scan beam sweeps top to bottom
+ * once and lights the dashes it passes. The beam is the product in one gesture:
+ * a workspace being read, nothing being moved.
  */
 export function Lattice({ className }: { className?: string }): React.JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null)
@@ -46,6 +51,10 @@ export function Lattice({ className }: { className?: string }): React.JSX.Elemen
       draw(performance.now())
     }
 
+    const INTRO = 1.1 // seconds for a dash to settle
+    const BEAM = 1.6 // seconds for the beam to cross
+    const easeOut = (x: number): number => 1 - Math.pow(1 - x, 3)
+
     const draw = (now: number): void => {
       const t = (now - t0) / 1000
       ctx.clearRect(0, 0, w, h)
@@ -54,25 +63,54 @@ export function Lattice({ className }: { className?: string }): React.JSX.Elemen
       ctx.lineWidth = 2
       const cols = Math.ceil(w / CELL) + 1
       const rows = Math.ceil(h / CELL) + 1
+      const maxD = Math.hypot(w, h) / 2
+      const beamY = reduce || t > BEAM ? -1e4 : (t / BEAM) * (h + 80) - 40
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
           const r = seed(i, j)
+          const r2 = seed(j + 7, i + 3)
           const cx = i * CELL
           const cy = j * CELL
+          // Entrance: settle from a scattered offset, delayed by distance from centre.
+          const delay = reduce ? 0 : (Math.hypot(cx - w / 2, cy - h / 2) / maxD) * 0.5
+          const p = reduce ? 1 : easeOut(Math.min(1, Math.max(0, (t - delay) / INTRO)))
+          const sx = cx + (r - 0.5) * 160 * (1 - p)
+          const sy = cy + (r2 - 0.5) * 160 * (1 - p)
+          const rot = (r2 - 0.5) * Math.PI * (1 - p)
           // Gentle breathing, phase-offset per cell. Frozen at t=0 under reduced motion.
           const breathe = reduce ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.8 + r * Math.PI * 2)
           // Pointer lifts nearby dashes: brighter and wider within ~140px.
-          const dx = cx - pointer.x
-          const dy = cy - pointer.y
-          const near = Math.max(0, 1 - Math.hypot(dx, dy) / 140)
-          const len = DASH * (0.35 + 0.65 * r) * (1 + near * 0.6)
-          const alpha = Math.min(1, (0.1 + 0.16 * breathe * r) * gain + near * 0.5)
+          const near = Math.max(0, 1 - Math.hypot(cx - pointer.x, cy - pointer.y) / 140)
+          // Scan beam: a soft band ~36px tall lights what it passes.
+          const lit = Math.max(0, 1 - Math.abs(cy - beamY) / 36)
+          const len = DASH * (0.35 + 0.65 * r) * (1 + near * 0.6 + lit * 0.8)
+          const alpha = Math.min(
+            1,
+            ((0.1 + 0.16 * breathe * r) * gain + near * 0.5 + lit * 0.7) * (0.2 + 0.8 * p)
+          )
           ctx.globalAlpha = alpha
+          ctx.save()
+          ctx.translate(sx, sy)
+          ctx.rotate(rot)
           ctx.beginPath()
-          ctx.moveTo(cx - len / 2, cy)
-          ctx.lineTo(cx + len / 2, cy)
+          ctx.moveTo(-len / 2, 0)
+          ctx.lineTo(len / 2, 0)
           ctx.stroke()
+          ctx.restore()
         }
+      }
+      if (beamY > -1e3) {
+        // The beam itself: a hairline with a soft halo.
+        const g = ctx.createLinearGradient(0, beamY - 40, 0, beamY + 40)
+        g.addColorStop(0, 'transparent')
+        g.addColorStop(0.5, ink)
+        g.addColorStop(1, 'transparent')
+        ctx.globalAlpha = 0.12 * gain
+        ctx.fillStyle = g
+        ctx.fillRect(0, beamY - 40, w, 80)
+        ctx.globalAlpha = 0.6
+        ctx.fillStyle = ink
+        ctx.fillRect(0, beamY, w, 1)
       }
       ctx.globalAlpha = 1
     }

@@ -91,7 +91,7 @@ function assertNoFingerprints(): void {
 
 test('workspace: onboarding, then grouped overview with redacted key counts', async () => {
   render(<WorkspacePage />)
-  assert.ok(screen.getByText(/Point Plumbr Env at a folder/))
+  assert.ok(screen.getByRole('heading', { level: 1, name: /Point Plumbr Env at a folder/ }))
 
   await act(() => useWorkspace.getState().grant())
   // First Git project opens by default with its environment matrix.
