@@ -20,6 +20,7 @@ import { PlannedPage } from '@/pages/Planned'
 import { SettingsPage } from '@/pages/Settings'
 import { HistoryPage } from '@/pages/History'
 import { AgentsPage } from '@/pages/Agents'
+import { Lock } from '@/components/app/Lock'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { MAKER, PRODUCT } from '@shared/product'
@@ -98,6 +99,7 @@ export default function App(): React.JSX.Element {
   const setPage = useWorkspace((s) => s.setPage)
   const receipt = useWorkspace((s) => s.receipt)
   const paired = useWorkspace((s) => Boolean(s.left && s.right))
+  const license = useWorkspace((s) => s.license)
   const collapsed = useWorkspace((s) => s.sidebarCollapsed)
   const toggleSidebar = useWorkspace((s) => s.toggleSidebar)
 
@@ -155,6 +157,9 @@ export default function App(): React.JSX.Element {
     if (!nav || !el) return
     setInd({ y: el.offsetTop, h: el.offsetHeight })
   }, [page, collapsed])
+
+  // Trial over: the whole window is the lock screen. Main refuses data IPCs too.
+  if (license?.state === 'expired') return <Lock reason={license.reason} />
 
   return (
     <div className="flex h-full">

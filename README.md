@@ -160,3 +160,21 @@ The app bundles a stdio MCP server (`out/main/mcp.js`) that runs under the app b
 the one-liner for Claude Code or the JSON for Cursor and friends. Tools: `list_projects`,
 `env_status`, `compare_env`, `dry_run_plan`. It reads only the workspace granted in the app,
 returns key names and drift classes, never values, and has no write or sync tool.
+
+## Licensing and trial
+
+Every install gets a 7-day trial, tracked in the local store. After that the window locks and
+main refuses every data IPC (the MCP server refuses tool calls too) until a key is entered in
+Settings → License. Keys are offline, Ed25519-signed, verified against the public key in
+`src/shared/license-pubkey.ts`. Nothing is sent anywhere.
+
+```bash
+node scripts/license.mjs keygen                         # once: writes the public key file, prints the private key
+export DRIFT_LICENSE_PRIVATE_KEY=…                      # keep this in a password manager, never in the repo
+node scripts/license.mjs issue customer@example.com 365 # a key valid for 365 days; omit days for perpetual
+```
+
+**Before the first public release, run `keygen` on your own machine and commit the new
+public key.** The pair in the repo today was generated during development. A local trial is
+bypassable by anyone willing to delete app data; a licence server is the upgrade path if that
+matters.

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { DriftReceipt } from '@shared/drift'
 import type { EnvFileInfo, ScanResult } from '@shared/channels'
+import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
 export const DEFAULT_IGNORE = ['NODE_ENV']
@@ -33,6 +34,9 @@ const readCollapsed = (): boolean => {
 
 type State = {
   page: PageId
+  /** null until main has answered; 'expired' locks the whole window. */
+  license: LicenseState | null
+  setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
   root: string | null
@@ -64,6 +68,8 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 
 export const useWorkspace = create<State>((set, get) => ({
   page: 'workspace',
+  license: null,
+  setLicense: (license) => set({ license }),
   sidebarCollapsed: readCollapsed(),
   toggleSidebar: () =>
     set((s) => {
@@ -89,6 +95,9 @@ export const useWorkspace = create<State>((set, get) => ({
   setPage: (page) => set({ page }),
 
   init: async () => {
+    const license = await window.plumbr.getLicense()
+    set({ license })
+    if (license.state === 'expired') return
     const root = await window.plumbr.recentWorkspace()
     if (!root) return
     set({ root })

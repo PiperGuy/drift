@@ -1,5 +1,14 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { FolderOpen, GitCompareArrows, ScanSearch, Trash2, type LucideIcon } from 'lucide-react'
+import {
+  Bot,
+  Eraser,
+  FolderOpen,
+  GitCompareArrows,
+  KeyRound,
+  ScanSearch,
+  Trash2,
+  type LucideIcon
+} from 'lucide-react'
 import type { HistoryEvent, HistoryKind } from '@shared/channels'
 import { fmtAgo } from '@/lib/format'
 import { useWorkspace } from '@/store/workspace'
@@ -9,7 +18,11 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   grant: { icon: FolderOpen, label: 'Granted', tone: 'text-lemon-ink bg-lemon-soft' },
   scan: { icon: ScanSearch, label: 'Scanned', tone: 'text-foreground bg-muted' },
   compare: { icon: GitCompareArrows, label: 'Compared', tone: 'text-warn bg-warn-soft' },
-  forget: { icon: Trash2, label: 'Forgot', tone: 'text-bad bg-bad-soft' }
+  forget: { icon: Trash2, label: 'Forgot', tone: 'text-bad bg-bad-soft' },
+  clear: { icon: Eraser, label: 'Cleared', tone: 'text-muted-foreground bg-muted' },
+  license: { icon: KeyRound, label: 'Licensed', tone: 'text-ok bg-ok-soft' },
+  mcp_install: { icon: Bot, label: 'MCP added', tone: 'text-lemon-ink bg-lemon-soft' },
+  mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' }
 }
 
 const base = (p: unknown): string =>
@@ -32,6 +45,13 @@ function describe(e: HistoryEvent): string {
     }
     case 'forget':
       return 'Workspace, receipts and history cleared'
+    case 'clear':
+      return 'Receipts and history cleared'
+    case 'license':
+      return `Key activated${e.subject['name'] ? ` for ${e.subject['name']}` : ''}`
+    case 'mcp_install':
+    case 'mcp_uninstall':
+      return String(e.subject['client'] ?? '')
   }
 }
 

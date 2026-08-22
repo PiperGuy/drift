@@ -45,6 +45,7 @@ export function openStore(file: string): {
   lastRoot: () => string | null
   touchRoot: (path: string) => void
   forgetAll: () => void
+  clearCache: () => void
   saveReceipt: (receipt: DriftReceipt) => number
   logEvent: (kind: HistoryKind, subject: object, detail?: object) => void
   listEvents: (limit?: number) => HistoryEvent[]
@@ -87,6 +88,7 @@ export function openStore(file: string): {
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
     forgetAll: () => db.exec('DELETE FROM roots; DELETE FROM receipts; DELETE FROM events;'),
+    clearCache: () => db.exec('DELETE FROM receipts; DELETE FROM events;'),
     saveReceipt: (r) =>
       Number(
         q.insertReceipt.run(

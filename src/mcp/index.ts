@@ -16,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { envKind } from '@shared/env-file'
 import { planSync } from '@shared/drift'
 import { PRODUCT } from '@shared/product'
+import { licenseState } from '@shared/license'
 import { grantRoot, scanWorkspace } from '../main/workspace'
 import { compareFiles, envShape } from '../main/env'
 
@@ -26,10 +27,24 @@ if (!dbPath) {
   process.exit(2)
 }
 
-/** The root granted in the app. Re-read per call so a new grant in the app applies immediately. */
+/**
+ * The root granted in the app. Re-read per call so a new grant, the MCP toggle and
+ * the license all apply immediately without restarting the client.
+ */
 function root(): string {
   const db = new DatabaseSync(dbPath!, { readOnly: true })
   try {
+    const meta = (k: string): string | null =>
+      (db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.['value'] as
+        string | undefined) ?? null
+    if (meta('mcp_enabled') === '0') throw new Error(`MCP is turned off in ${PRODUCT} settings.`)
+    const lic = licenseState({
+      key: meta('license_key'),
+      trialStartedAt: Number(meta('trial_started_at') ?? Date.now()),
+      lastSeen: Number(meta('last_seen') ?? 0)
+    })
+    if (lic.state === 'expired')
+      throw new Error(`${PRODUCT} trial has ended. Enter a license key in the app.`)
     const row = db.prepare('SELECT path FROM roots ORDER BY granted_at DESC LIMIT 1').get()
     const path = row?.['path'] as string | undefined
     if (!path) throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)

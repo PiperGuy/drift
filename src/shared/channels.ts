@@ -5,6 +5,7 @@
  * Values never cross the bridge: only key names, fingerprints and classes.
  */
 import type { DriftReceipt, KeyEntry } from './drift'
+import type { LicenseState } from './license'
 
 export const Channels = {
   workspacePick: 'workspace:pick',
@@ -14,7 +15,16 @@ export const Channels = {
   appInfo: 'app:info',
   workspaceRecent: 'workspace:recent',
   historyList: 'history:list',
-  dataForget: 'data:forget'
+  dataForget: 'data:forget',
+  dataClear: 'data:clear',
+  settingsGet: 'settings:get',
+  settingsSet: 'settings:set',
+  licenseGet: 'license:get',
+  licenseActivate: 'license:activate',
+  updateCheck: 'update:check',
+  mcpClients: 'mcp:clients',
+  mcpInstall: 'mcp:install',
+  mcpUninstall: 'mcp:uninstall'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -40,7 +50,8 @@ export type ScanResult = {
 export type EnvShape = { path: string; name: string; entries: KeyEntry[] }
 
 /** Append-only, redacted audit trail. Subject and detail hold paths, key names and counts. Never a value. */
-export type HistoryKind = 'grant' | 'scan' | 'compare' | 'forget'
+export type HistoryKind =
+  'grant' | 'scan' | 'compare' | 'forget' | 'clear' | 'license' | 'mcp_install' | 'mcp_uninstall'
 export type HistoryEvent = {
   id: number
   at: number
@@ -60,8 +71,28 @@ export type AppInfo = {
   /** False when the OS keyring is unavailable: fingerprints are then per-session only. */
   keyPersisted: boolean
   /** How to launch the bundled MCP server: the app binary as Node, the server script, the store. */
-  mcp: { command: string; args: string[]; env: Record<string, string> }
+  mcp: McpLaunch
 }
+
+export type McpLaunch = { command: string; args: string[]; env: Record<string, string> }
+export type McpClientId =
+  'claude-code' | 'claude-desktop' | 'codex' | 'cursor' | 'copilot' | 'windsurf' | 'gemini'
+export type McpClientStatus = {
+  id: McpClientId
+  label: string
+  file: string
+  installed: boolean
+  /** True when installing also drops the Drift skill next to the server config. */
+  skill: boolean
+}
+
+/** User settings persisted in the store. */
+export type Settings = { mcpEnabled: boolean }
+
+export type UpdateResult =
+  | { status: 'current'; version: string }
+  | { status: 'available'; version: string }
+  | { status: 'error'; message: string }
 
 export type ScanRequest = { root: string }
 export type ShapeRequest = { path: string }
@@ -79,4 +110,15 @@ export type PlumbrApi = {
   listHistory: () => Promise<HistoryEvent[]>
   /** Wipe roots, receipts and history. Keeps the fingerprint key. */
   forgetData: () => Promise<void>
+  /** Drop receipts and history, keep the workspace. */
+  clearCache: () => Promise<void>
+  getSettings: () => Promise<Settings>
+  setSettings: (patch: Partial<Settings>) => Promise<Settings>
+  getLicense: () => Promise<LicenseState>
+  /** Verify and store a key. Resolves to the new state; rejects with a message on a bad key. */
+  activateLicense: (key: string) => Promise<LicenseState>
+  checkUpdates: () => Promise<UpdateResult>
+  mcpClients: () => Promise<McpClientStatus[]>
+  mcpInstall: (id: McpClientId) => Promise<McpClientStatus[]>
+  mcpUninstall: (id: McpClientId) => Promise<McpClientStatus[]>
 }

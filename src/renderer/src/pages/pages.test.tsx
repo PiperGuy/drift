@@ -70,6 +70,23 @@ const plumbr: PlumbrApi = {
   recentWorkspace: vi.fn(async () => null),
   listHistory: vi.fn(async () => []),
   forgetData: vi.fn(async () => {}),
+  clearCache: vi.fn(async () => {}),
+  getSettings: vi.fn(async () => ({ mcpEnabled: true })),
+  setSettings: vi.fn(async (p) => ({ mcpEnabled: p.mcpEnabled ?? true })),
+  getLicense: vi.fn(async () => ({
+    state: 'trial' as const,
+    endsAt: Date.now() + 86_400_000,
+    daysLeft: 1
+  })),
+  activateLicense: vi.fn(async () => ({
+    state: 'licensed' as const,
+    name: 'test',
+    expiresAt: null
+  })),
+  checkUpdates: vi.fn(async () => ({ status: 'current' as const, version: '0.1.0' })),
+  mcpClients: vi.fn(async () => []),
+  mcpInstall: vi.fn(async () => []),
+  mcpUninstall: vi.fn(async () => []),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',

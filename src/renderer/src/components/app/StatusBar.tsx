@@ -9,6 +9,7 @@ export function StatusBar(): React.JSX.Element {
   const root = useWorkspace((s) => s.root)
   const scan = useWorkspace((s) => s.scan)
   const scanning = useWorkspace((s) => s.scanning)
+  const license = useWorkspace((s) => s.license)
   return (
     <footer
       className="flex h-7 shrink-0 items-center gap-4 border-t bg-sidebar px-3 font-mono text-[11px] text-muted-foreground"
@@ -21,6 +22,14 @@ export function StatusBar(): React.JSX.Element {
             : `${root} · ${scan?.files.length ?? 0} files · ${scan?.projects.length ?? 0} projects`
           : 'no workspace granted'}
       </span>
+      {license?.state === 'trial' && (
+        <span
+          className="text-warn"
+          title={`Trial ends ${new Date(license.endsAt).toLocaleString()}`}
+        >
+          trial · {license.daysLeft}d left
+        </span>
+      )}
       <span
         className="hidden items-center gap-1 sm:inline-flex"
         title="Values never leave the main process"

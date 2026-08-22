@@ -3,6 +3,7 @@ import { Check, Copy } from 'lucide-react'
 import type { AppInfo } from '@shared/channels'
 import { PRODUCT } from '@shared/product'
 import { Button } from '@/components/ui/button'
+import { McpClients } from '@/components/app/McpClients'
 
 const TOOLS = [
   ['list_projects', 'Every .env* file, grouped by Git project. Names, kinds, sizes, dates.'],
@@ -83,14 +84,21 @@ export function AgentsPage(): React.JSX.Element {
 
         <section className="space-y-3">
           <h2 className="text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-            Claude Code
+            One-click setup
+          </h2>
+          <McpClients />
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+            Manual · Claude Code
           </h2>
           <Snippet label="Run once in a terminal" code={claude} />
         </section>
 
         <section className="space-y-3">
           <h2 className="text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-            Cursor, Windsurf, Claude Desktop and others
+            Manual · Cursor, Windsurf, Claude Desktop and others
           </h2>
           <Snippet label="Add to the client's MCP config" code={json} />
         </section>
