@@ -259,7 +259,8 @@ export function WorkspacePage(): React.JSX.Element {
   } = useWorkspace()
   const groups = useGroups()
   const fileMatches = useFileMatch()
-  const [open, setOpen] = useState<EnvFileInfo | null>(null)
+  const open = useWorkspace((s) => s.openFile)
+  const setOpen = useWorkspace((s) => s.setOpenFile)
   const openPath = open?.path ?? null
   const [dialog, setDialog] = useState<'new' | 'edit' | null>(null)
 

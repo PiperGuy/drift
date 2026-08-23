@@ -151,7 +151,8 @@ export default function App(): React.JSX.Element {
           className={cn(
             'flex shrink-0 items-center gap-1 px-2',
             strip ? 'h-12 pt-1 pl-[max(0.5rem,env(titlebar-area-x,5rem))]' : 'h-10',
-            collapsed && 'flex-col justify-center py-2'
+            collapsed && 'h-auto flex-col justify-center gap-1 px-0 py-2',
+            collapsed && strip && 'pt-8'
           )}
         >
           {strip && !collapsed && <span className="w-16 shrink-0" aria-hidden="true" />}

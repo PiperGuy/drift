@@ -58,6 +58,9 @@ type State = {
   /** An open file viewer has unsaved edits: navigation and root changes must ask first. */
   viewerDirty: boolean
   setViewerDirty: (v: boolean) => void
+  /** File open in the viewer. Lives here so switching project or source closes it. */
+  openFile: EnvFileInfo | null
+  setOpenFile: (f: EnvFileInfo | null) => void
   /** Workspace search: project name, file path, key name. Shared by sidebar and table. */
   search: string
   setSearch: (q: string) => void
@@ -124,6 +127,8 @@ export const useWorkspace = create<State>((set, get) => ({
   setLicense: (license) => set({ license }),
   viewerDirty: false,
   setViewerDirty: (v) => set({ viewerDirty: v }),
+  openFile: null,
+  setOpenFile: (f) => set({ openFile: f }),
   search: '',
   setSearch: (q) => set({ search: q }),
   sidebarWidth: (() => {
@@ -179,6 +184,7 @@ export const useWorkspace = create<State>((set, get) => ({
       receipt: null,
       error: null,
       viewerDirty: false,
+      openFile: null,
       page: 'workspace'
     })
     await get().loadWorkspaces()
@@ -292,6 +298,8 @@ export const useWorkspace = create<State>((set, get) => ({
   },
 
   updateSource: async (req) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    set({ viewerDirty: false, openFile: null })
     const id = get().workspace
     const current = get().workspaces.find((w) => w.id === id)
     if (!current) return
@@ -307,7 +315,8 @@ export const useWorkspace = create<State>((set, get) => ({
     } else if (req.kind === 'local') {
       // The caller passes kind 'local' only when the user chose a different directory.
       const ok = await get().grant()
-      if (ok && old) await get().removeRoot(old.path)
+      const picked = get().roots.find((r) => r.path !== old?.path)
+      if (ok && old && picked && picked.path !== old.path) await get().removeRoot(old.path)
     }
     await get().loadWorkspaces()
   },
@@ -387,7 +396,7 @@ export const useWorkspace = create<State>((set, get) => ({
   },
 
   openProject: async (project) => {
-    set({ project })
+    set((s) => ({ project, openFile: s.project === project ? s.openFile : null }))
     const { scan, summaries } = get()
     if (!project || !scan) return
     const todo = scan.files.filter((f) => projectKey(f) === project && !(f.path in summaries))
