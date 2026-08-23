@@ -3,7 +3,8 @@ import { dirname, join, relative, resolve, posix } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { mkdirSync } from 'node:fs'
 import { ENV_FILE, SKIP_DIRS } from '@shared/env-file'
 import type { EnvFileInfo, ScanResult } from '@shared/channels'
 
@@ -42,10 +43,26 @@ export function baseRef(ref: string): string {
 // ---------- ssh transport ----------
 
 const run = promisify(execFile)
+
+let controlDirReady: string | null = null
+/** ~/.ssh/drift, created once, mode 700. Falls back to no multiplexing if that fails. */
+function controlDir(): string {
+  if (controlDirReady) return controlDirReady
+  const dir = join(homedir(), '.ssh', 'drift')
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    controlDirReady = dir
+  } catch {
+    controlDirReady = tmpdir()
+  }
+  return controlDirReady
+}
 const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 
 /** Run a shell script on `host` via the system ssh. Non-interactive: keys or agent only. */
 export async function sshExec(host: string, script: string, timeoutMs = 60_000): Promise<string> {
+  // Unix sockets cap at ~104 bytes; macOS temp dirs alone are ~50. A short path under
+  // ~/.ssh with the short %C hash keeps multiplexing working everywhere.
   const control =
     process.platform === 'win32'
       ? []
@@ -53,7 +70,7 @@ export async function sshExec(host: string, script: string, timeoutMs = 60_000):
           '-o',
           'ControlMaster=auto',
           '-o',
-          `ControlPath=${join(tmpdir(), 'drift-ssh-%C')}`,
+          `ControlPath=${controlDir()}/d-%C`,
           '-o',
           'ControlPersist=120'
         ]
