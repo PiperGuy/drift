@@ -202,6 +202,8 @@ export default function App(): React.JSX.Element {
         <div
           className={cn(
             'flex h-12 items-center gap-2.5 pt-1',
+            // macOS traffic lights sit over the top-left corner of a hiddenInset window.
+            isMac && 'mt-7',
             collapsed ? 'justify-center' : 'px-3 pl-[max(0.75rem,env(titlebar-area-x,0.75rem))]'
           )}
         >

@@ -23,6 +23,8 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Sit the traffic lights in their own strip above the sidebar header (see App.tsx mt-7).
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
     backgroundColor: '#08090a',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
