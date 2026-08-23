@@ -263,7 +263,7 @@ export default function App(): React.JSX.Element {
           </button>
         </div>
       </aside>
-      <div className="hairline relative flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col">
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden" key={page}>
           <div className="enter h-full">
             {page === 'workspace' && <WorkspacePage />}
