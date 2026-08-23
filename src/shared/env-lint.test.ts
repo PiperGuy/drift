@@ -101,3 +101,27 @@ test('secret-in-example fires only for credential-shaped values under secret-ish
   ).map((i) => i.rule)
   assert.deepEqual(rules, ['secret-in-example'])
 })
+
+test('format keeps escaped quotes, comments after quoted values, and never leaks invalid lines', () => {
+  const src =
+    'CONFIG="{\\"enabled\\":true}"\nTOKEN="v" # rotation note\nsk_live_4eC39HqLyjWDarjtT1zdp7dc\n'
+  const out = formatEnv(src)
+  // Escaped quotes survive, the comment survives, and a quote that is not needed is dropped.
+  assert.equal(
+    out,
+    'CONFIG="{\\"enabled\\":true}"\nTOKEN=v # rotation note\nsk_live_4eC39HqLyjWDarjtT1zdp7dc\n'
+  )
+  assert.deepEqual(parseEnv(out), parseEnv(src))
+  const v = viewEnv(src)
+  assert.ok(!JSON.stringify(v).includes('sk_live'))
+  assert.ok(!JSON.stringify(v).includes('enabled'))
+  assert.equal(v.lines[2].kind, 'invalid')
+  if (v.lines[1].kind === 'assign') assert.equal(v.lines[1].comment, '# rotation note')
+  // Quoted credentials in example files are caught too.
+  assert.deepEqual(
+    lintEnv('STRIPE_SECRET_KEY="sk_live_4eC39HqLyjWDarjtT1zdp7dc"\n', { example: true }).map(
+      (i) => i.rule
+    ),
+    ['secret-in-example']
+  )
+})

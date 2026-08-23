@@ -60,6 +60,16 @@ function Reveal({
   const open = shown?.key === line.key
   if (line.length === 0)
     return <span className="font-mono text-[10px] text-muted-foreground">blank</span>
+  // Reveal fetches the effective (last) value; a shadowed line would show the wrong one.
+  if (line.shadowed)
+    return (
+      <span
+        className="font-mono text-[11px] tracking-[0.2em] text-muted-foreground"
+        title="Shadowed: reveal the later assignment instead"
+      >
+        {line.mask}
+      </span>
+    )
   if (open)
     return (
       <span className="inline-flex items-center gap-1">

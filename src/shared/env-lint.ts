@@ -3,7 +3,7 @@
  * `viewEnv` is what the renderer gets: every line typed, values replaced by a
  * mask of the same length class. Raw values never leave this module's caller.
  */
-import { assignmentSpans } from './env-file'
+import { assignmentSpans, readQuoted } from './env-file'
 
 const LINE = /^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)(\s*)=(\s*)(.*)$/
 
@@ -61,6 +61,26 @@ export function looksLikeSecret(value: string): boolean {
   if (/^(your|xxx|changeme|replace|todo|example|placeholder|<)/i.test(value)) return false
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(value)).length
   return classes >= 3 || (classes >= 2 && value.length >= 32)
+}
+
+/** Effective value, quote style and trailing comment of one assignment span. */
+function readSpan(spanText: string): {
+  value: string
+  quote: '"' | "'" | '`' | null
+  comment: string | null
+} {
+  const body = spanText.replace(/^\s*(export\s+)?[^=]+=\s*/, '')
+  const v = body.trim()
+  if (/^["'`]/.test(v)) {
+    const r = readQuoted(v)
+    return {
+      value: r.value,
+      quote: v[0] as '"' | "'" | '`',
+      comment: r.rest.startsWith('#') ? r.rest : null
+    }
+  }
+  const s = splitUnquoted(v)
+  return { value: s.value, quote: null, comment: s.comment }
 }
 
 function splitUnquoted(v: string): { value: string; comment: string | null } {
@@ -150,6 +170,16 @@ export function lintEnv(text: string, opts: { example?: boolean } = {}): LintIss
       })
     const v = rest.trim()
     const quoted = /^["'`]/.test(v)
+    const spanHere = spans.find((s) => s.start === i)
+    const effective = spanHere ? readSpan(spanHere.text).value : v
+    if (opts.example && looksLikeSecret(effective) && SECRET_KEY.test(key))
+      issues.push({
+        line: n,
+        rule: 'secret-in-example',
+        severity: 'error',
+        message: 'Looks like a real credential in an example file',
+        fixable: false
+      })
     if (!quoted) {
       const { value } = splitUnquoted(v)
       if (value === '')
@@ -176,15 +206,7 @@ export function lintEnv(text: string, opts: { example?: boolean } = {}): LintIss
           message: 'Unquoted # may start a comment in other loaders; quote it',
           fixable: true
         })
-      if (opts.example && looksLikeSecret(value) && SECRET_KEY.test(key))
-        issues.push({
-          line: n,
-          rule: 'secret-in-example',
-          severity: 'error',
-          message: 'Looks like a real credential in an example file',
-          fixable: false
-        })
-    } else if (v.length === 2 && v[0] === v[1]) {
+    } else if (effective === '') {
       issues.push({
         line: n,
         rule: 'empty-value',
@@ -243,26 +265,9 @@ export function formatEnv(text: string): string {
       out.push(raw)
       continue
     }
-    const [, , exp, key, , , rest] = m
-    const v = rest.trim()
-    let value: string
-    let comment: string | null = null
-    if (v.startsWith('"')) {
-      // Re-parse the (possibly multi-line) quoted value from the span, then re-quote.
-      const body = span.text.replace(/^\s*(export\s+)?[^=]+=\s*/, '')
-      const end = body.indexOf('"', 1)
-      value = (end > 0 ? body.slice(1, end) : body.slice(1))
-        .replace(/\\n/g, '\n')
-        .replace(/\\"/g, '"')
-      i = span.end
-    } else if (v.startsWith("'") || v.startsWith('`')) {
-      const end = v.indexOf(v[0], 1)
-      value = end > 0 ? v.slice(1, end) : v.slice(1)
-    } else {
-      const s = splitUnquoted(v)
-      value = s.value
-      comment = s.comment
-    }
+    const [, , exp, key] = m
+    const { value, comment } = readSpan(span.text)
+    i = span.end
     out.push(`${exp ? 'export ' : ''}${key}=${quoteIfNeeded(value)}${comment ? ' ' + comment : ''}`)
   }
   while (out.length && out[out.length - 1] === '') out.pop()
@@ -291,33 +296,13 @@ export function viewEnv(text: string, opts: { example?: boolean } = {}): EnvView
     const m = LINE.exec(raw)
     const span = spans.find((s) => s.start === i)
     if (!m || !span) {
-      // Not parseable: show the first token only, never what follows it.
-      out.push({
-        n,
-        kind: 'invalid',
-        text: raw.trim().split(/\s+/)[0].slice(0, 40) + (raw.trim().length > 40 ? '…' : '')
-      })
+      // Not parseable. Nothing from the line reaches the renderer: it may be a pasted secret.
+      out.push({ n, kind: 'invalid', text: `(${raw.trim().length} characters, not KEY=value)` })
       continue
     }
-    const [, , exp, key, , , rest] = m
-    const v = rest.trim()
-    const quote = (/^["'`]/.test(v) ? v[0] : null) as ViewLine extends { quote: infer Q }
-      ? Q
-      : never
-    let length: number
-    let comment: string | null = null
-    if (quote === '"') {
-      const body = span.text.replace(/^\s*(export\s+)?[^=]+=\s*/, '')
-      const end = body.indexOf('"', 1)
-      length = (end > 0 ? body.slice(1, end) : body.slice(1)).length
-    } else if (quote) {
-      const end = v.indexOf(quote, 1)
-      length = (end > 0 ? v.slice(1, end) : v.slice(1)).length
-    } else {
-      const s = splitUnquoted(v)
-      length = s.value.length
-      comment = s.comment
-    }
+    const [, , exp, key] = m
+    const { value, quote, comment } = readSpan(span.text)
+    const length = value.length
     out.push({
       n,
       kind: 'assign',

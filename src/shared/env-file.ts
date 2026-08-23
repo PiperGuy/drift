@@ -7,6 +7,36 @@ export type RawEntry = { key: string; value: string }
 
 const LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)?\s*$/
 
+/**
+ * Read a quoted value starting at `s[0]` (the quote). Double quotes honour \" and \\
+ * and turn \n into a newline, like dotenv; single quotes and backticks are literal.
+ * Returns the decoded value, the index just past the closing quote (or s.length if
+ * unterminated), and whatever followed (a trailing comment, usually).
+ */
+export function readQuoted(s: string): {
+  value: string
+  end: number
+  rest: string
+  closed: boolean
+} {
+  const q = s[0]
+  let out = ''
+  let i = 1
+  while (i < s.length) {
+    const c = s[i]
+    if (q === '"' && c === '\\' && i + 1 < s.length) {
+      const n = s[i + 1]
+      out += n === 'n' ? '\n' : n
+      i += 2
+      continue
+    }
+    if (c === q) return { value: out, end: i + 1, rest: s.slice(i + 1).trim(), closed: true }
+    out += c
+    i++
+  }
+  return { value: out, end: s.length, rest: '', closed: false }
+}
+
 export function parseEnv(text: string): RawEntry[] {
   const out: RawEntry[] = []
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -17,18 +47,15 @@ export function parseEnv(text: string): RawEntry[] {
     if (!m) continue
     const key = m[1]
     let value = (m[2] ?? '').trim()
-    // Multi-line double-quoted values.
-    if (value.startsWith('"') && !value.slice(1).includes('"')) {
-      while (i + 1 < lines.length && !value.slice(1).includes('"')) {
+    // Multi-line double-quoted values: keep pulling lines until the quote closes.
+    if (value.startsWith('"')) {
+      while (i + 1 < lines.length && !readQuoted(value).closed) {
         i += 1
         value += '\n' + lines[i]
       }
     }
     if (value.startsWith('"') || value.startsWith("'") || value.startsWith('`')) {
-      const q = value[0]
-      const end = value.indexOf(q, 1)
-      value = end > 0 ? value.slice(1, end) : value.slice(1)
-      if (q === '"') value = value.replace(/\\n/g, '\n').replace(/\\"/g, '"')
+      value = readQuoted(value).value
     } else {
       // Unquoted: strip trailing comment.
       value = value.replace(/\s+#.*$/, '').trim()
@@ -54,8 +81,8 @@ export function assignmentSpans(text: string): Span[] {
     if (!m) continue
     const start = i
     let value = (m[2] ?? '').trim()
-    if (value.startsWith('"') && !value.slice(1).includes('"')) {
-      while (i + 1 < lines.length && !value.slice(1).includes('"')) {
+    if (value.startsWith('"')) {
+      while (i + 1 < lines.length && !readQuoted(value).closed) {
         i += 1
         value += '\n' + lines[i]
       }
