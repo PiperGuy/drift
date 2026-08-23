@@ -163,11 +163,18 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
   assert.ok(screen.getByTitle('4 keys, 0 blank'))
   assertNoFingerprints()
 
-  // Pick A and B, and the receipt becomes reachable.
-  const open = screen.getByRole('button', { name: /Open receipt/ })
+  // Tick two files and the receipt becomes reachable. Nothing selected: no compare bar at all.
+  assert.equal(screen.queryByRole('button', { name: /^Compare/ }), null)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select api/.env to compare' }))
+  const open = screen.getByRole('button', { name: /^Compare/ })
   assert.ok(open.hasAttribute('disabled'))
-  fireEvent.click(screen.getByRole('button', { name: 'Use api/.env as A' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Use api/.env.production as B' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select api/.env.production to compare' }))
+  // A third file cannot be ticked while two are selected.
+  assert.ok(
+    screen
+      .getByRole('checkbox', { name: 'Select api/.env.staging to compare' })
+      .hasAttribute('disabled')
+  )
   assert.ok(!open.hasAttribute('disabled'))
   assert.equal(useWorkspace.getState().left?.rel, 'api/.env')
   fireEvent.click(open)

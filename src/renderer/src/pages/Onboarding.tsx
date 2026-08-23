@@ -392,7 +392,7 @@ export function OnboardingPage(): React.JSX.Element {
               </Title>
               <div className="mt-6 grid gap-3 sm:grid-cols-3">
                 <Card n={4} icon={FolderSearch} title={`Workspace · ${MOD}1`}>
-                  Projects on the left, environments per project, A and B pickers on each file.
+                  Projects on the left, environments per project, tick two files to compare.
                 </Card>
                 <Card n={5} icon={Receipt} title={`Receipt · ${MOD}2`}>
                   Classes per key, filters, search with {MOD}F, and the dry-run plan tab.

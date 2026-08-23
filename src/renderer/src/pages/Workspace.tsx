@@ -167,10 +167,11 @@ function PairSlot({
   )
 }
 
+/** Appears only once something is ticked; Compare needs two. */
 function PairBar(): React.JSX.Element {
   const { left, right, pick, swap, setPage } = useWorkspace()
   return (
-    <div className="flex h-14 shrink-0 items-center gap-3 border-t bg-card px-5">
+    <div className="enter flex h-14 shrink-0 items-center gap-3 border-t bg-card px-5">
       <PairSlot side="A" file={left} clear={() => pick('left', null)} />
       <Button
         size="icon-xs"
@@ -184,11 +185,22 @@ function PairBar(): React.JSX.Element {
       <PairSlot side="B" file={right} clear={() => pick('right', null)} />
       <Button
         size="sm"
+        variant="ghost"
+        onClick={() => {
+          pick('left', null)
+          pick('right', null)
+        }}
+      >
+        Clear
+      </Button>
+      <Button
+        size="sm"
         className="press"
         disabled={!left || !right}
+        title={!left || !right ? 'Tick a second file to compare' : undefined}
         onClick={() => setPage('receipt')}
       >
-        Open receipt <ArrowRight />
+        Compare <ArrowRight />
       </Button>
     </div>
   )
@@ -518,7 +530,7 @@ export function WorkspacePage(): React.JSX.Element {
                           <th className="text-right">Keys</th>
                           <th className="hidden @4xl:table-cell">Modified</th>
                           <th className="hidden text-right @4xl:table-cell">Size</th>
-                          <th className="w-24 text-right">Compare</th>
+                          <th className="w-16 text-right">Select</th>
                         </tr>
                       </thead>
                       <tbody className="stagger" key={project ?? ''}>
@@ -590,30 +602,32 @@ export function WorkspacePage(): React.JSX.Element {
                                 {fmtSize(f.size)}
                               </td>
                               <td className="text-right">
-                                <div
-                                  className="inline-flex gap-1"
-                                  role="group"
-                                  aria-label={`Compare ${f.rel}`}
-                                >
-                                  <Button
-                                    size="xs"
-                                    variant={isL ? 'default' : 'outline'}
-                                    aria-pressed={isL}
-                                    aria-label={`Use ${f.rel} as A`}
-                                    onClick={() => pick('left', isL ? null : f)}
-                                  >
-                                    A
-                                  </Button>
-                                  <Button
-                                    size="xs"
-                                    variant={isR ? 'default' : 'outline'}
-                                    aria-pressed={isR}
-                                    aria-label={`Use ${f.rel} as B`}
-                                    onClick={() => pick('right', isR ? null : f)}
-                                  >
-                                    B
-                                  </Button>
-                                </div>
+                                <label className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+                                  {(isL || isR) && (
+                                    <span className="rounded-sm bg-primary px-1 font-semibold text-primary-foreground">
+                                      {isL ? 'A' : 'B'}
+                                    </span>
+                                  )}
+                                  <input
+                                    type="checkbox"
+                                    className="size-3.5 accent-(--lemon-ink)"
+                                    checked={isL || isR}
+                                    disabled={!isL && !isR && Boolean(left && right)}
+                                    aria-label={`Select ${f.rel} to compare`}
+                                    title={
+                                      !isL && !isR && left && right
+                                        ? 'Two files are already selected'
+                                        : undefined
+                                    }
+                                    onChange={() => {
+                                      // First tick is A (source), second is B (target); untick clears that side.
+                                      if (isL) pick('left', null)
+                                      else if (isR) pick('right', null)
+                                      else if (!left) pick('left', f)
+                                      else pick('right', f)
+                                    }}
+                                  />
+                                </label>
                               </td>
                             </tr>
                           )
@@ -628,7 +642,7 @@ export function WorkspacePage(): React.JSX.Element {
         </div>
       ) : null}
 
-      {scan && scan.files.length > 0 && <PairBar />}
+      {(left || right) && <PairBar />}
     </div>
   )
 }
