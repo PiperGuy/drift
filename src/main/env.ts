@@ -66,7 +66,8 @@ export async function envShape(path: string): Promise<EnvShape> {
 export async function revealValue(path: string, key: string): Promise<string | null> {
   assertGranted(path)
   const text = await readFile(path, 'utf8')
-  return parseEnv(text).find((e) => e.key === key)?.value ?? null
+  // Last assignment wins, matching dotenv and the fingerprint used in receipts.
+  return parseEnv(text).findLast((e) => e.key === key)?.value ?? null
 }
 
 export async function compareFiles(

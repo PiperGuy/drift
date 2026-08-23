@@ -58,6 +58,16 @@ function createWindow(): void {
   }
 }
 
+// One instance: a second launch (Windows/Linux shortcut while parked in the tray) just
+// surfaces the running one, instead of a duplicate tray and a second writer on the store.
+if (!app.requestSingleInstanceLock()) app.quit()
+app.on('second-instance', () => {
+  if (mainWindow) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+})
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.theplumbr.drift')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
@@ -71,9 +81,8 @@ app.whenReady().then(() => {
   }
   createTray(show, () => show().webContents.send(Channels.trayCompare))
   app.on('before-quit', () => (quitting = true))
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  // Dock click on macOS: the window may exist but be hidden in the tray.
+  app.on('activate', () => void show())
 })
 
 // The tray keeps the app alive on every platform; Quit is explicit.
