@@ -28,6 +28,7 @@ const plumbr: PlumbrApi = {
   mcpInstall: (id) => ipcRenderer.invoke(Channels.mcpInstall, id),
   mcpUninstall: (id) => ipcRenderer.invoke(Channels.mcpUninstall, id),
   revealValue: (req) => ipcRenderer.invoke(Channels.envReveal, req),
+  revealAll: (req) => ipcRenderer.invoke(Channels.envRevealAll, req),
   onUpdate: (cb) => {
     const h = (_e: Electron.IpcRendererEvent, ev: Parameters<typeof cb>[0]): void => cb(ev)
     ipcRenderer.on(Channels.updateEvent, h)

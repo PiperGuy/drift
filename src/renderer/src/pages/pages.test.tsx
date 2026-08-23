@@ -103,6 +103,7 @@ const plumbr: PlumbrApi = {
   mcpInstall: vi.fn(async () => []),
   mcpUninstall: vi.fn(async () => []),
   revealValue: vi.fn(async () => ({ value: null, method: 'dialog' as const })),
+  revealAll: vi.fn(async () => ({ values: {}, method: 'dialog' as const })),
   applyPlan: vi.fn(async () => ({ written: [], skipped: [], snapshot: 1 })),
   listSnapshots: vi.fn(async () => []),
   rollback: vi.fn(async () => {}),

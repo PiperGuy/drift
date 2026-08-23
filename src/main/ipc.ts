@@ -25,7 +25,7 @@ import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
 import { osAuth } from './auth'
 import { trayReceipt } from './tray'
-import { revealValue } from './env'
+import { revealAllValues, revealValue } from './env'
 import {
   ApplyRequestSchema,
   FormatRequestSchema,
@@ -319,6 +319,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const id = SnapshotId.parse(raw)
     await rollback(store, id)
     store.logEvent('rollback', { snapshot: id, path: store.snapshotBlob(id)?.path })
+  })
+
+  ipcMain.handle(Channels.envRevealAll, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path } = ViewRequestSchema.parse(raw)
+    const method = authed ?? (authed = await osAuth('reveal environment values', getWindow()))
+    const values = await revealAllValues(path)
+    store.logEvent('reveal', { path, key: '*' }, { method, keys: Object.keys(values).length })
+    return { values, method }
   })
 
   // Background update: check shortly after launch, download silently, tell the renderer.

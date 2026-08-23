@@ -52,16 +52,25 @@ function Reveal({
   line,
   shown,
   onShown,
-  onHide
+  onHide,
+  all
 }: {
   path: string
   line: Extract<ViewLine, { kind: 'assign' }>
   shown: { key: string; value: string | null } | null
   onShown: (s: { key: string; value: string | null }) => void
   onHide: () => void
+  /** Set while "Reveal all" is active: every key shows from this map. */
+  all?: Record<string, string> | null
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  if (all && line.length > 0 && !line.shadowed)
+    return (
+      <code className="max-w-64 truncate rounded-sm bg-background px-1.5 py-0.5 font-mono text-[11px] select-text">
+        {all[line.key] ?? '(not in file)'}
+      </code>
+    )
   const open = shown?.key === line.key
   if (line.length === 0)
     return <span className="font-mono text-[10px] text-muted-foreground">blank</span>
@@ -198,6 +207,8 @@ export function EnvViewer({
     (l.kind === 'assign' && l.key.toLowerCase().includes(q)) ||
     (l.kind === 'comment' && l.text.toLowerCase().includes(q))
   const [shown, setShown] = useState<{ key: string; value: string | null } | null>(null)
+  const [all, setAll] = useState<Record<string, string> | null>(null)
+  const [revealingAll, setRevealingAll] = useState(false)
   const [formatting, setFormatting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const rescan = useWorkspace((s) => s.rescan)
@@ -219,6 +230,27 @@ export function EnvViewer({
     const t = setTimeout(() => setShown(null), HIDE_AFTER_MS)
     return () => clearTimeout(t)
   }, [shown])
+  useEffect(() => {
+    if (!all) return
+    const t = setTimeout(() => setAll(null), HIDE_AFTER_MS)
+    return () => clearTimeout(t)
+  }, [all])
+  const revealAll = async (): Promise<void> => {
+    if (all) {
+      setAll(null)
+      return
+    }
+    setRevealingAll(true)
+    try {
+      const r = await window.plumbr.revealAll({ path: file.path })
+      setAll(r.values)
+      setShown(null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.replace(/^.*Error: /, '') : String(e))
+    } finally {
+      setRevealingAll(false)
+    }
+  }
 
   const byLine = new Map<number, LintIssue[]>()
   for (const i of view?.lint ?? []) byLine.set(i.line, [...(byLine.get(i.line) ?? []), i])
@@ -286,11 +318,11 @@ export function EnvViewer({
 
   return (
     <div className="enter flex min-h-0 flex-1 flex-col" aria-label={`${file.rel} viewer`}>
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b px-4">
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>
+      <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-4 py-1.5">
+        <span className="min-w-32 flex-1 truncate font-mono text-xs" title={file.path}>
           {file.rel}
         </span>
-        <div className="relative w-44">
+        <div className="relative w-40 shrink">
           <Search
             className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
@@ -341,6 +373,21 @@ export function EnvViewer({
           {counts.info > 0 && <span className="text-muted-foreground">{counts.info} hints</span>}
           {view && view.lint.length === 0 && <span className="text-ok">clean</span>}
         </span>
+        <Button
+          size="xs"
+          variant={all ? 'default' : 'outline'}
+          className="press"
+          disabled={!view || revealingAll}
+          title={
+            all
+              ? 'Hide every value'
+              : 'Show every value for 20 seconds (asks the OS once per session)'
+          }
+          onClick={revealAll}
+        >
+          {revealingAll ? <Fingerprint className="animate-pulse" /> : all ? <EyeOff /> : <Eye />}
+          {all ? 'Hide all' : 'Reveal all'}
+        </Button>
         <Button
           size="xs"
           variant={view?.formatted ? 'ghost' : 'outline'}
@@ -556,6 +603,7 @@ export function EnvViewer({
                           shown={shown}
                           onShown={setShown}
                           onHide={() => setShown(null)}
+                          all={all}
                         />
                         {!l.shadowed && (
                           <Button
@@ -676,6 +724,7 @@ export function EnvViewer({
                             shown={shown}
                             onShown={setShown}
                             onHide={() => setShown(null)}
+                            all={all}
                           />
                           {l.quote && <span className="text-muted-foreground">{l.quote}</span>}
                           {l.multiline && (

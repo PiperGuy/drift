@@ -69,6 +69,13 @@ export async function revealValue(path: string, key: string): Promise<string | n
   return parseEnv(text).findLast((e) => e.key === key)?.value ?? null
 }
 
+/** Every effective value of a file (last assignment wins). Same guard as revealValue. */
+export async function revealAllValues(path: string): Promise<Record<string, string>> {
+  assertGranted(path)
+  const text = await readText(path)
+  return Object.fromEntries(parseEnv(text).map((e) => [e.key, e.value]))
+}
+
 export async function compareFiles(
   left: string,
   right: string,

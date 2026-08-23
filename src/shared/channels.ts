@@ -42,7 +42,8 @@ export const Channels = {
   historyRollback: 'history:rollback',
   envView: 'env:view',
   envFormat: 'env:format',
-  envSet: 'env:set'
+  envSet: 'env:set',
+  envRevealAll: 'env:reveal-all'
 } as const
 
 /** A named set of roots. One is active at a time. */
@@ -220,6 +221,10 @@ export type PlumbrApi = {
   mcpUninstall: (id: McpClientId) => Promise<McpClientStatus[]>
   /** One value, after OS auth. Rejects if cancelled. */
   revealValue: (req: RevealRequest) => Promise<RevealResult>
+  /** Every value of one file, after OS auth. */
+  revealAll: (
+    req: ViewRequest
+  ) => Promise<{ values: Record<string, string>; method: RevealResult['method'] }>
   onUpdate: (cb: (e: UpdateEvent) => void) => () => void
   installUpdate: () => Promise<void>
   /** Tray → "Compare again". */

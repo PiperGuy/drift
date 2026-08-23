@@ -70,7 +70,9 @@ function describe(e: HistoryEvent): string {
     case 'mcp_uninstall':
       return String(e.subject['client'] ?? '')
     case 'reveal':
-      return `${e.subject['key']} in ${base(e.subject['path'])} · ${e.detail['method']}`
+      return e.subject['key'] === '*'
+        ? `all ${e.detail['keys']} keys in ${base(e.subject['path'])} · ${e.detail['method']}`
+        : `${e.subject['key']} in ${base(e.subject['path'])} · ${e.detail['method']}`
     case 'apply': {
       const w = (e.detail['written'] as string[] | undefined) ?? []
       return `${w.length} key${w.length === 1 ? '' : 's'} → ${base(e.subject['right'])} · ${w.join(', ')}`
