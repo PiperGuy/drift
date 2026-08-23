@@ -220,7 +220,8 @@ export function WorkspacePage(): React.JSX.Element {
 
   const [open, setOpen] = useState<EnvFileInfo | null>(null)
   const openPath = open?.path ?? null
-  const [viewerDirty, setViewerDirty] = useState(false)
+  const viewerDirty = useWorkspace((s) => s.viewerDirty)
+  const setViewerDirty = useWorkspace((s) => s.setViewerDirty)
 
   // Search: project name, file path, and key names for projects already inspected.
   const [query, setQuery] = useState('')

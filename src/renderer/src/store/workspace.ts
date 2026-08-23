@@ -42,6 +42,9 @@ type State = {
   setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  /** An open file viewer has unsaved edits: navigation and root changes must ask first. */
+  viewerDirty: boolean
+  setViewerDirty: (v: boolean) => void
   /** Keys written this session, for the status bar. */
   written: number
   noteWritten: (n: number) => void
@@ -81,6 +84,8 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ onboarded: v })
   },
   setLicense: (license) => set({ license }),
+  viewerDirty: false,
+  setViewerDirty: (v) => set({ viewerDirty: v }),
   written: 0,
   noteWritten: (n) => set((s) => ({ written: s.written + n })),
   sidebarCollapsed: readCollapsed(),
@@ -105,7 +110,17 @@ export const useWorkspace = create<State>((set, get) => ({
   receipt: null,
   comparing: false,
 
-  setPage: (page) => set({ page }),
+  setPage: (page) => {
+    const s = get()
+    if (
+      s.viewerDirty &&
+      page !== s.page &&
+      !window.confirm('Discard unsaved changes to the open file?')
+    )
+      return
+    if (page !== 'workspace') set({ viewerDirty: false })
+    set({ page })
+  },
 
   init: async () => {
     const license = await window.plumbr.getLicense()
@@ -132,6 +147,8 @@ export const useWorkspace = create<State>((set, get) => ({
     }),
 
   grant: async () => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    set({ viewerDirty: false })
     const root = await window.plumbr.pickWorkspace()
     if (!root) return
     set({ root, scan: null, project: null, summaries: {}, left: null, right: null, receipt: null })

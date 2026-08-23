@@ -151,7 +151,21 @@ export function EnvViewer({
   const [adding, setAdding] = useState<{ key: string; value: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const dirty = edits.size > 0
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
+  // Baseline for the stale-file guard: the mtime when the first edit was staged, not after a rescan.
+  const [baseMtime, setBaseMtime] = useState<number | null>(null)
+  const stage = (key: string, value: string): void => {
+    setBaseMtime((b) => b ?? file.modifiedAt)
+    setEdits((m) => new Map(m).set(key, value))
+  }
+  const clearEdits = (): void => {
+    setEdits(new Map())
+    setEditing(null)
+    setBaseMtime(null)
+  }
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
   const guardedClose = (): void => {
     if (
       dirty &&
@@ -246,12 +260,11 @@ export function EnvViewer({
     try {
       const r = await window.plumbr.setValues({
         path: file.path,
-        expectedMtime: file.modifiedAt,
+        expectedMtime: baseMtime ?? file.modifiedAt,
         entries: [...edits].map(([key, value]) => ({ key, value }))
       })
       noteWritten(r.written.length)
-      setEdits(new Map())
-      setEditing(null)
+      clearEdits()
       toast.success(
         `Saved ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${file.rel}`,
         {
@@ -265,7 +278,8 @@ export function EnvViewer({
       setSaving(false)
     }
   }
-  const existing = new Set(assigns.map((a) => a.key))
+  // Every key in the file, regardless of the search filter.
+  const existing = new Set((view?.lines ?? []).flatMap((l) => (l.kind === 'assign' ? [l.key] : [])))
   const newKeys = [...edits.keys()].filter(
     (k) => !(view?.lines ?? []).some((l) => l.kind === 'assign' && l.key === k)
   )
@@ -375,7 +389,7 @@ export function EnvViewer({
                     toast.error(`${key} already exists; edit it instead`)
                     return
                   }
-                  setEdits((m) => new Map(m).set(key, adding.value))
+                  stage(key, adding.value)
                   setAdding(null)
                 }}
               >
@@ -421,15 +435,7 @@ export function EnvViewer({
                 <span className="font-mono text-[11px] text-warn">
                   {edits.size} unsaved change{edits.size === 1 ? '' : 's'}
                 </span>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => {
-                    setEdits(new Map())
-                    setEditing(null)
-                  }}
-                  disabled={saving}
-                >
+                <Button size="xs" variant="ghost" onClick={clearEdits} disabled={saving}>
                   Discard
                 </Button>
                 <Button size="xs" className="press" onClick={save} disabled={saving}>
@@ -505,7 +511,7 @@ export function EnvViewer({
                         onSubmit={(e) => {
                           e.preventDefault()
                           const v = (new FormData(e.currentTarget).get('v') as string) ?? ''
-                          setEdits((m) => new Map(m).set(l.key, v))
+                          stage(l.key, v)
                           setEditing(null)
                         }}
                       >
