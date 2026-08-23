@@ -84,16 +84,20 @@ export async function sshExec(host: string, script: string, timeoutMs = 60_000):
   } catch (e) {
     const err = e as NodeJS.ErrnoException & { stderr?: string; code?: number | string }
     if (err.code === 'ENOENT') throw new Error('ssh is not installed on this machine')
-    const msg = (err.stderr ?? '').trim().split('\n').pop() ?? ''
+    const lines = (err.stderr ?? '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !/^Warning: Permanently added/.test(l))
+    const msg = lines[lines.length - 1] ?? ''
+    // The exact command, so the user can reproduce it in a terminal and see the same output.
+    const repro = `ssh -o BatchMode=yes ${host} true`
+    let hint = ''
     if (/Permission denied|publickey/i.test(msg))
-      throw new Error(
-        `${host}: authentication failed. Drift uses your ssh keys or agent; BatchMode, so no password prompts.`
-      )
-    if (/Host key verification failed/i.test(msg))
-      throw new Error(
-        `${host}: host key not trusted. Connect once from a terminal so it lands in known_hosts.`
-      )
-    throw new Error(`${host}: ${msg || 'ssh failed'}`)
+      hint =
+        'Drift runs ssh non-interactively (BatchMode): the key must be loaded in your agent or have no passphrase, and Tailscale SSH must not need a browser check.'
+    else if (/Host key verification failed/i.test(msg))
+      hint = 'Connect once from a terminal so the host key lands in known_hosts.'
+    throw new Error(`${host}: ${msg || 'ssh failed'}.${hint ? ' ' + hint : ''} Try: ${repro}`)
   }
 }
 
