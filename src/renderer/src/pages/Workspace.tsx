@@ -1,10 +1,11 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowRight,
   ArrowRightLeft,
   FolderOpen,
   GitBranch,
   RefreshCw,
+  Search,
   ShieldCheck,
   X
 } from 'lucide-react'
@@ -15,10 +16,13 @@ import { Lattice } from '@/components/app/Lattice'
 import { EnvViewer } from '@/components/app/EnvViewer'
 import { fmtAgo, fmtSize } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { UNGROUPED, useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { PRODUCT } from '@shared/product'
+
+const isMacPlatform = navigator.platform.startsWith('Mac')
 
 const KIND_LABEL: Record<EnvKind, string> = {
   base: '.env',
@@ -217,9 +221,35 @@ export function WorkspacePage(): React.JSX.Element {
   const [open, setOpen] = useState<EnvFileInfo | null>(null)
   const openPath = open?.path ?? null
 
+  // Search: project name, file path, and key names for projects already inspected.
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const q = query.trim().toLowerCase()
+  const fileMatches = (f: EnvFileInfo): boolean =>
+    !q ||
+    f.rel.toLowerCase().includes(q) ||
+    (summaries[f.path]?.names.some((k) => k.key.toLowerCase().includes(q)) ?? false)
+  const visibleGroups = q
+    ? groups.filter(([name, fs]) => name.toLowerCase().includes(q) || fs.some(fileMatches))
+    : groups
+
   if (!root) return <Onboarding grant={grant} />
 
-  const files = groups.find(([k]) => k === project)?.[1] ?? []
+  const allFiles = groups.find(([k]) => k === project)?.[1] ?? []
+  // A query that matched the project name keeps every file; otherwise narrow to matching files.
+  const files =
+    q && !(project ?? '').toLowerCase().includes(q) ? allFiles.filter(fileMatches) : allFiles
   const present = new Map<EnvKind, number>()
   for (const f of files) present.set(envKind(f.name), (present.get(envKind(f.name)) ?? 0) + 1)
 
@@ -282,7 +312,37 @@ export function WorkspacePage(): React.JSX.Element {
             aria-label="Projects"
             className="flex items-start gap-1 overflow-auto border-b p-2 @3xl:flex-col @3xl:items-stretch @3xl:border-r @3xl:border-b-0"
           >
-            {groups.map(([name, fs]) => {
+            <div className="relative mb-1 w-full shrink-0">
+              <Search
+                className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                ref={searchRef}
+                aria-label="Search projects, files and keys"
+                placeholder={`Search (${isMacPlatform ? '⌘' : 'Ctrl+'}F)`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
+                className="h-7 pl-7 font-mono text-xs"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => setQuery('')}
+                  className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+            {visibleGroups.length === 0 && (
+              <p className="px-2 py-3 text-xs text-muted-foreground">
+                No project, file or key matches.
+              </p>
+            )}
+            {visibleGroups.map(([name, fs]) => {
               const active = name === project
               const kinds = [...new Set(fs.map((f) => envKind(f.name)))]
               return (
