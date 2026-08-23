@@ -20,6 +20,19 @@ export const ApplyRequestSchema = z.object({
 })
 export const ViewRequestSchema = z.object({ path: z.string().min(1) })
 export const FormatRequestSchema = z.object({ path: z.string().min(1), expectedMtime: z.number() })
+export const SetRequestSchema = z.object({
+  path: z.string().min(1),
+  expectedMtime: z.number(),
+  entries: z
+    .array(
+      z.object({
+        key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]*$/),
+        value: z.string().max(65536)
+      })
+    )
+    .min(1)
+    .max(500)
+})
 export const SnapshotId = z.number().int().positive()
 export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([

@@ -28,10 +28,11 @@ import {
   ApplyRequestSchema,
   FormatRequestSchema,
   RevealRequestSchema,
+  SetRequestSchema,
   SnapshotId,
   ViewRequestSchema
 } from '@shared/ipc'
-import { applyPlan, formatFile, rollback } from './write'
+import { applyPlan, formatFile, rollback, setValues } from './write'
 import { viewEnv } from '@shared/env-lint'
 import { envKind } from '@shared/env-file'
 import { readFile } from 'node:fs/promises'
@@ -222,6 +223,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const { path, expectedMtime } = FormatRequestSchema.parse(raw)
     const r = await formatFile(store, path, expectedMtime)
     if (r.changed) store.logEvent('format', { path, snapshot: r.snapshot }, { changed: r.changed })
+    return r
+  })
+  ipcMain.handle(Channels.envSet, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const req = SetRequestSchema.parse(raw)
+    const r = await setValues(store, req)
+    store.logEvent('edit', { path: req.path, snapshot: r.snapshot }, { written: r.written })
     return r
   })
   ipcMain.handle(Channels.historySnapshots, () => {

@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-const { applyPlan, rollback } = await import('./write')
+const { applyPlan, rollback, setValues } = await import('./write')
 const { openStore } = await import('./store')
 const { grantRoot } = await import('./workspace')
 
@@ -65,6 +65,33 @@ test('apply: mtime guard, snapshot, in-place patch, rollback restores bytes', as
     assert.equal(readFileSync(right, 'utf8'), original)
     assert.equal(store.listSnapshots().length, 2)
     assert.equal(store.listSnapshots()[0].reason, 'rollback')
+    store.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('setValues: updates in place keeping export/comment, appends new keys, quotes when needed', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'drift-edit-'))
+  try {
+    grantRoot(dir)
+    const f = join(dir, '.env')
+    writeFileSync(f, '# hi\nexport TOKEN=old # rotate monthly\nPORT=3000\n')
+    const store = openStore(join(dir, 'plumbr.db'))
+    const r = await setValues(store, {
+      path: f,
+      expectedMtime: statSync(f).mtimeMs,
+      entries: [
+        { key: 'TOKEN', value: 'new value' },
+        { key: 'NEW', value: 'x' }
+      ]
+    })
+    assert.deepEqual(r.written, ['TOKEN', 'NEW'])
+    assert.equal(
+      readFileSync(f, 'utf8'),
+      '# hi\nexport TOKEN="new value" # rotate monthly\nPORT=3000\nNEW=x\n'
+    )
+    assert.equal(store.listSnapshots()[0].reason, 'edit')
     store.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

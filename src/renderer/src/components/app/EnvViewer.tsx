@@ -9,6 +9,9 @@ import {
   Fingerprint,
   Info,
   Loader2,
+  Pencil,
+  Plus,
+  Save,
   Search,
   Sparkles,
   X
@@ -133,12 +136,32 @@ function Reveal({
  */
 export function EnvViewer({
   file,
-  onClose
+  onClose,
+  onDirtyChange
 }: {
   file: EnvFileInfo
   onClose: () => void
+  /** Lets the page guard project switches while there are unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
   const [view, setView] = useState<EnvView | null>(null)
+  // Pending edits: key → typed value. Existing keys update in place, new keys append.
+  const [edits, setEdits] = useState<Map<string, string>>(new Map())
+  const [editing, setEditing] = useState<string | null>(null)
+  const [adding, setAdding] = useState<{ key: string; value: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const dirty = edits.size > 0
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
+  const guardedClose = (): void => {
+    if (
+      dirty &&
+      !window.confirm(
+        `Discard ${edits.size} unsaved change${edits.size === 1 ? '' : 's'} to ${file.rel}?`
+      )
+    )
+      return
+    onClose()
+  }
   const [mode, setMode] = useState<'ui' | 'file'>('ui')
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -218,6 +241,35 @@ export function EnvViewer({
     }
   }
 
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    try {
+      const r = await window.plumbr.setValues({
+        path: file.path,
+        expectedMtime: file.modifiedAt,
+        entries: [...edits].map(([key, value]) => ({ key, value }))
+      })
+      noteWritten(r.written.length)
+      setEdits(new Map())
+      setEditing(null)
+      toast.success(
+        `Saved ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${file.rel}`,
+        {
+          description: 'Snapshot taken first. Roll back from History.'
+        }
+      )
+      await rescan()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.replace(/^.*Error: /, '') : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+  const existing = new Set(assigns.map((a) => a.key))
+  const newKeys = [...edits.keys()].filter(
+    (k) => !(view?.lines ?? []).some((l) => l.kind === 'assign' && l.key === k)
+  )
+
   return (
     <div className="enter flex min-h-0 flex-1 flex-col" aria-label={`${file.rel} viewer`}>
       <header className="flex h-11 shrink-0 items-center gap-3 border-b px-4">
@@ -294,7 +346,7 @@ export function EnvViewer({
           )}
           {view?.formatted ? 'Formatted' : 'Format'}
         </Button>
-        <Button size="icon-xs" variant="ghost" aria-label="Close file" onClick={onClose}>
+        <Button size="icon-xs" variant="ghost" aria-label="Close file" onClick={guardedClose}>
           <X />
         </Button>
       </header>
@@ -307,83 +359,258 @@ export function EnvViewer({
       {!view ? (
         <div className="scanline mt-0" aria-hidden="true" />
       ) : mode === 'ui' ? (
-        <ul className="stagger min-h-0 flex-1 overflow-auto p-3" aria-label="Keys">
-          {assigns.map((l, i) => {
-            const k = kindOf(l.key)
-            const issues = byLine.get(l.n) ?? []
-            return (
+        <>
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+            {adding ? (
+              <form
+                className="flex flex-1 items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const key = adding.key.trim()
+                  if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key)) {
+                    toast.error('Key must be letters, digits and _ . -, not starting with a digit')
+                    return
+                  }
+                  if (existing.has(key) || edits.has(key)) {
+                    toast.error(`${key} already exists; edit it instead`)
+                    return
+                  }
+                  setEdits((m) => new Map(m).set(key, adding.value))
+                  setAdding(null)
+                }}
+              >
+                <Input
+                  autoFocus
+                  aria-label="New key"
+                  placeholder="NEW_KEY"
+                  value={adding.key}
+                  onChange={(e) => setAdding({ ...adding, key: e.target.value.toUpperCase() })}
+                  className="h-7 w-48 font-mono text-xs"
+                  spellCheck={false}
+                />
+                <span className="text-muted-foreground">=</span>
+                <Input
+                  aria-label="New value"
+                  placeholder="value"
+                  type="password"
+                  value={adding.value}
+                  onChange={(e) => setAdding({ ...adding, value: e.target.value })}
+                  className="h-7 flex-1 font-mono text-xs"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <Button type="submit" size="xs" className="press">
+                  Add
+                </Button>
+                <Button type="button" size="xs" variant="ghost" onClick={() => setAdding(null)}>
+                  Cancel
+                </Button>
+              </form>
+            ) : (
+              <Button
+                size="xs"
+                variant="outline"
+                className="press"
+                onClick={() => setAdding({ key: '', value: '' })}
+              >
+                <Plus /> Add key
+              </Button>
+            )}
+            {dirty && !adding && (
+              <span className="ml-auto inline-flex items-center gap-2">
+                <span className="font-mono text-[11px] text-warn">
+                  {edits.size} unsaved change{edits.size === 1 ? '' : 's'}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    setEdits(new Map())
+                    setEditing(null)
+                  }}
+                  disabled={saving}
+                >
+                  Discard
+                </Button>
+                <Button size="xs" className="press" onClick={save} disabled={saving}>
+                  {saving ? (
+                    <Loader2 className="animate-spin motion-reduce:animate-none" />
+                  ) : (
+                    <Save />
+                  )}{' '}
+                  Save
+                </Button>
+              </span>
+            )}
+          </div>
+          <ul className="stagger min-h-0 flex-1 overflow-auto p-3" aria-label="Keys">
+            {newKeys.map((k) => (
               <li
-                key={l.n}
-                style={{ '--i': i } as CSSProperties}
-                className={cn(
-                  'elev mb-2 rounded-lg border bg-card px-3 py-2',
-                  l.shadowed && 'opacity-60',
-                  shown?.key === l.key && 'border-lemon-ink/40 bg-lemon-soft/40'
-                )}
+                key={`new:${k}`}
+                className="elev mb-2 rounded-lg border border-lemon-ink/40 bg-lemon-soft/40 px-3 py-2"
               >
                 <div className="flex items-center gap-2">
-                  <span
-                    className={cn('rounded-md border px-1.5 py-0.5 font-mono text-[10px]', k.tone)}
+                  <span className="rounded-md border border-lemon-ink/20 bg-lemon-soft px-1.5 py-0.5 font-mono text-[10px] text-lemon-ink">
+                    new
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">{k}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {'•'.repeat(Math.min(edits.get(k)!.length, 24)) || 'blank'}
+                  </span>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`Remove ${k}`}
+                    onClick={() =>
+                      setEdits((m) => {
+                        const n = new Map(m)
+                        n.delete(k)
+                        return n
+                      })
+                    }
                   >
-                    {k.label}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
-                    {l.key}
-                  </span>
-                  <Reveal
-                    path={file.path}
-                    line={l}
-                    shown={shown}
-                    onShown={setShown}
-                    onHide={() => setShown(null)}
-                  />
+                    <X />
+                  </Button>
                 </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-                  <span>line {l.n}</span>
-                  <span>· {l.length} chars</span>
-                  {l.quote && (
-                    <span>
-                      · {l.quote === '"' ? 'double' : l.quote === "'" ? 'single' : 'backtick'}{' '}
-                      quoted
-                    </span>
-                  )}
-                  {l.multiline && <span>· multi-line</span>}
-                  {l.export && <span>· export</span>}
-                  {l.shadowed && (
-                    <span className="text-warn">· shadowed by a later assignment</span>
-                  )}
-                  {l.comment && (
-                    <span className="truncate text-muted-foreground/70">· {l.comment}</span>
-                  )}
-                </div>
-                {issues.length > 0 && (
-                  <ul className="mt-1.5 space-y-0.5">
-                    {issues.map((is) => {
-                      const S = SEV[is.severity]
-                      return (
-                        <li
-                          key={is.rule}
-                          className={cn('flex items-center gap-1.5 text-[11px]', S.tone)}
-                        >
-                          <S.icon className="size-3" aria-hidden="true" />
-                          {is.message}
-                          {is.fixable && (
-                            <span className="text-muted-foreground">· fixable by Format</span>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
               </li>
-            )
-          })}
-          {assigns.length === 0 && (
-            <li className="p-6 text-center text-xs text-muted-foreground">
-              {q ? 'No keys match.' : 'No keys in this file.'}
-            </li>
-          )}
-        </ul>
+            ))}
+            {assigns.map((l, i) => {
+              const k = kindOf(l.key)
+              const issues = byLine.get(l.n) ?? []
+              return (
+                <li
+                  key={l.n}
+                  style={{ '--i': i } as CSSProperties}
+                  className={cn(
+                    'elev mb-2 rounded-lg border bg-card px-3 py-2',
+                    l.shadowed && 'opacity-60',
+                    shown?.key === l.key && 'border-lemon-ink/40 bg-lemon-soft/40'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        'rounded-md border px-1.5 py-0.5 font-mono text-[10px]',
+                        k.tone
+                      )}
+                    >
+                      {k.label}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
+                      {l.key}
+                    </span>
+                    {editing === l.key ? (
+                      <form
+                        className="flex flex-1 items-center gap-1.5"
+                        onSubmit={(e) => {
+                          e.preventDefault()
+                          const v = (new FormData(e.currentTarget).get('v') as string) ?? ''
+                          setEdits((m) => new Map(m).set(l.key, v))
+                          setEditing(null)
+                        }}
+                      >
+                        <Input
+                          autoFocus
+                          name="v"
+                          aria-label={`New value for ${l.key}`}
+                          type={shown?.key === l.key ? 'text' : 'password'}
+                          defaultValue={
+                            edits.get(l.key) ?? (shown?.key === l.key ? (shown.value ?? '') : '')
+                          }
+                          placeholder={
+                            shown?.key === l.key ? '' : 'new value (current stays hidden)'
+                          }
+                          className="h-7 flex-1 font-mono text-xs"
+                          spellCheck={false}
+                          autoComplete="off"
+                          onKeyDown={(e) => e.key === 'Escape' && setEditing(null)}
+                        />
+                        <Button type="submit" size="xs" className="press">
+                          Set
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setEditing(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </form>
+                    ) : (
+                      <>
+                        {edits.has(l.key) && (
+                          <span className="font-mono text-[10px] text-warn" title="Unsaved">
+                            pending
+                          </span>
+                        )}
+                        <Reveal
+                          path={file.path}
+                          line={l}
+                          shown={shown}
+                          onShown={setShown}
+                          onHide={() => setShown(null)}
+                        />
+                        {!l.shadowed && (
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Edit ${l.key}`}
+                            onClick={() => setEditing(l.key)}
+                          >
+                            <Pencil />
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+                    <span>line {l.n}</span>
+                    <span>· {l.length} chars</span>
+                    {l.quote && (
+                      <span>
+                        · {l.quote === '"' ? 'double' : l.quote === "'" ? 'single' : 'backtick'}{' '}
+                        quoted
+                      </span>
+                    )}
+                    {l.multiline && <span>· multi-line</span>}
+                    {l.export && <span>· export</span>}
+                    {l.shadowed && (
+                      <span className="text-warn">· shadowed by a later assignment</span>
+                    )}
+                    {l.comment && (
+                      <span className="truncate text-muted-foreground/70">· {l.comment}</span>
+                    )}
+                  </div>
+                  {issues.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {issues.map((is) => {
+                        const S = SEV[is.severity]
+                        return (
+                          <li
+                            key={is.rule}
+                            className={cn('flex items-center gap-1.5 text-[11px]', S.tone)}
+                          >
+                            <S.icon className="size-3" aria-hidden="true" />
+                            {is.message}
+                            {is.fixable && (
+                              <span className="text-muted-foreground">· fixable by Format</span>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+            {assigns.length === 0 && newKeys.length === 0 && (
+              <li className="p-6 text-center text-xs text-muted-foreground">
+                {q ? 'No keys match.' : 'No keys in this file.'}
+              </li>
+            )}
+          </ul>
+        </>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto font-mono text-xs">
           <table className="w-full border-collapse">

@@ -3,8 +3,15 @@ import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { safeStorage } from 'electron'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
-import { formatEnv } from '@shared/env-lint'
-import type { ApplyRequest, ApplyResult, FormatResult, Snapshot } from '@shared/channels'
+import { formatEnv, renderAssignment } from '@shared/env-lint'
+import type {
+  ApplyRequest,
+  ApplyResult,
+  FormatResult,
+  SetRequest,
+  SetResult,
+  Snapshot
+} from '@shared/channels'
 import { assertGranted } from './workspace'
 import type { Store } from './store'
 
@@ -109,6 +116,25 @@ export async function formatFile(
     throw new Error(`${path} changed while preparing the write. Rescan, then format.`)
   await atomicWrite(path, after)
   return { changed, snapshot: snap }
+}
+
+/** Write user-typed values: update in place or append. Same guards and snapshot as apply. */
+export async function setValues(store: Store, req: SetRequest): Promise<SetResult> {
+  assertGranted(req.path)
+  const st = await stat(req.path)
+  if (Math.abs(st.mtimeMs - req.expectedMtime) > 1)
+    throw new Error(`${req.path} changed since it was opened. Rescan, then edit again.`)
+  const text = await readFile(req.path, 'utf8')
+  const assignments = req.entries.map((e) => ({
+    key: e.key,
+    text: renderAssignment(text, e.key, e.value)
+  }))
+  const snap = await snapshot(store, req.path, 'edit')
+  const st2 = await stat(req.path)
+  if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size)
+    throw new Error(`${req.path} changed while preparing the write. Rescan, then edit again.`)
+  await atomicWrite(req.path, patchEnv(text, assignments))
+  return { written: assignments.map((a) => a.key), snapshot: snap }
 }
 
 export async function rollback(store: Store, id: number): Promise<void> {

@@ -231,12 +231,23 @@ export function lintEnv(text: string, opts: { example?: boolean } = {}): LintIss
 }
 
 /** Quote a value only if it needs it; double quotes, escaping " and newlines. */
-function quoteIfNeeded(value: string): string {
+export function quoteIfNeeded(value: string): string {
   if (value === '') return ''
   if (/[\s#"'`\\]/.test(value) || value !== value.trim()) {
     return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'
   }
   return value
+}
+
+/**
+ * The assignment text for `key=value`, keeping the `export` prefix and trailing
+ * comment of the existing assignment in `text` when there is one.
+ */
+export function renderAssignment(text: string, key: string, value: string): string {
+  const span = assignmentSpans(text).findLast((s) => s.key === key)
+  const exp = span ? /^\s*export\s+/.test(span.text) : false
+  const comment = span ? readSpan(span.text).comment : null
+  return `${exp ? 'export ' : ''}${key}=${quoteIfNeeded(value)}${comment ? ' ' + comment : ''}`
 }
 
 /**

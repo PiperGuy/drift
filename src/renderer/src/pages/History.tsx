@@ -33,7 +33,8 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   reveal: { icon: Eye, label: 'Revealed', tone: 'text-bad bg-bad-soft' },
   apply: { icon: PenLine, label: 'Wrote', tone: 'text-lemon-ink bg-lemon-soft' },
   rollback: { icon: Undo2, label: 'Rolled back', tone: 'text-warn bg-warn-soft' },
-  format: { icon: Sparkles, label: 'Formatted', tone: 'text-lemon-ink bg-lemon-soft' }
+  format: { icon: Sparkles, label: 'Formatted', tone: 'text-lemon-ink bg-lemon-soft' },
+  edit: { icon: PenLine, label: 'Edited', tone: 'text-lemon-ink bg-lemon-soft' }
 }
 
 const base = (p: unknown): string =>
@@ -73,6 +74,10 @@ function describe(e: HistoryEvent): string {
       return `${base(e.subject['path'])} restored from snapshot #${e.subject['snapshot']}`
     case 'format':
       return `${base(e.subject['path'])} · ${e.detail['changed']} lines tidied`
+    case 'edit': {
+      const w = (e.detail['written'] as string[] | undefined) ?? []
+      return `${base(e.subject['path'])} · ${w.join(', ')}`
+    }
   }
 }
 

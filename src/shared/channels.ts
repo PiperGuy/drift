@@ -34,7 +34,8 @@ export const Channels = {
   historySnapshots: 'history:snapshots',
   historyRollback: 'history:rollback',
   envView: 'env:view',
-  envFormat: 'env:format'
+  envFormat: 'env:format',
+  envSet: 'env:set'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -73,6 +74,7 @@ export type HistoryKind =
   | 'apply'
   | 'rollback'
   | 'format'
+  | 'edit'
 export type HistoryEvent = {
   id: number
   at: number
@@ -129,7 +131,7 @@ export type Snapshot = {
   id: number
   path: string
   at: number
-  reason: 'apply' | 'rollback' | 'format'
+  reason: 'apply' | 'rollback' | 'format' | 'edit'
   mtime: number
   size: number
   keys: string[]
@@ -140,6 +142,14 @@ export type Snapshot = {
 export type ViewRequest = { path: string }
 export type FormatRequest = { path: string; expectedMtime: number }
 export type FormatResult = { changed: number; snapshot: number | null }
+
+/** User-typed values for existing or new keys. The only renderer → main path carrying values. */
+export type SetRequest = {
+  path: string
+  expectedMtime: number
+  entries: { key: string; value: string }[]
+}
+export type SetResult = { written: string[]; snapshot: number }
 
 export type RevealRequest = { path: string; key: string }
 export type RevealResult = { value: string | null; method: 'touchid' | 'polkit' | 'dialog' }
@@ -196,4 +206,6 @@ export type PlumbrApi = {
   viewEnv: (req: ViewRequest) => Promise<EnvView>
   /** Rewrite in canonical form via the snapshot + atomic path. */
   formatEnv: (req: FormatRequest) => Promise<FormatResult>
+  /** Update or add keys with typed values, via the snapshot + atomic path. */
+  setValues: (req: SetRequest) => Promise<SetResult>
 }

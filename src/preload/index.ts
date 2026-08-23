@@ -32,6 +32,7 @@ const plumbr: PlumbrApi = {
   rollback: (id) => ipcRenderer.invoke(Channels.historyRollback, id),
   viewEnv: (req) => ipcRenderer.invoke(Channels.envView, req),
   formatEnv: (req) => ipcRenderer.invoke(Channels.envFormat, req),
+  setValues: (req) => ipcRenderer.invoke(Channels.envSet, req),
   onTrayCompare: (cb) => {
     ipcRenderer.on(Channels.trayCompare, cb)
     return () => ipcRenderer.removeListener(Channels.trayCompare, cb)

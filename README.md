@@ -168,6 +168,14 @@ untouched. Lint rules: duplicate-key, invalid-line, unquoted-space, unquoted-has
 surrounding-space, key-case, trailing-whitespace, empty-value, no-final-newline, crlf,
 mixed-export, secret-in-example.
 
+## Editing a file
+
+In the viewer's UI mode, the pencil on a key opens an inline value field (prefilled only if you
+revealed that key; otherwise the current value stays hidden and you type a replacement). **+ Add
+key** appends a new one. Edits collect into an unsaved-changes bar; **Save** writes them through
+the same mtime-guarded snapshot + atomic path, keeping `export` prefixes and trailing comments.
+Closing the viewer or switching project with unsaved edits asks first. Keys are never deleted here.
+
 ## Writing files
 
 The only write path is Receipt → Dry-run plan → **Apply to B…**. The dialog lists the exact keys

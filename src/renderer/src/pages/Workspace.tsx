@@ -220,6 +220,7 @@ export function WorkspacePage(): React.JSX.Element {
 
   const [open, setOpen] = useState<EnvFileInfo | null>(null)
   const openPath = open?.path ?? null
+  const [viewerDirty, setViewerDirty] = useState(false)
 
   // Search: project name, file path, and key names for projects already inspected.
   const [query, setQuery] = useState('')
@@ -351,9 +352,11 @@ export function WorkspacePage(): React.JSX.Element {
                   type="button"
                   aria-current={active ? 'true' : undefined}
                   onClick={() => {
-                    // Switching projects closes the open file. The viewer is read-only today;
-                    // an unsaved-changes dialog belongs here once editing exists.
+                    // Switching projects closes the open file; unsaved edits ask first.
+                    if (viewerDirty && !window.confirm('Discard unsaved changes to the open file?'))
+                      return
                     setOpen(null)
+                    setViewerDirty(false)
                     void openProject(name)
                   }}
                   className={cn(
@@ -398,7 +401,11 @@ export function WorkspacePage(): React.JSX.Element {
                 <EnvViewer
                   key={open.path}
                   file={files.find((f) => f.path === open.path) ?? open}
-                  onClose={() => setOpen(null)}
+                  onClose={() => {
+                    setOpen(null)
+                    setViewerDirty(false)
+                  }}
+                  onDirtyChange={setViewerDirty}
                 />
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
