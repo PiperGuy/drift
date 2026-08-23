@@ -73,6 +73,14 @@ export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyR
   }
   if (assignments.length === 0) throw new Error('Nothing to write: every key was skipped.')
   const snap = await snapshot(store, req.right, 'apply')
+  // Re-check right before the rename: sealing the snapshot took time and another
+  // process may have written B meanwhile. Patch against what is on disk now.
+  const st2 = await stat(req.right)
+  if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size) {
+    throw new Error(
+      `${req.right} changed while preparing the write. Rescan, compare again, then apply.`
+    )
+  }
   await atomicWrite(req.right, patchEnv(rightText, assignments))
   return { written: assignments.map((a) => a.key), skipped, snapshot: snap }
 }
@@ -84,6 +92,9 @@ export async function rollback(store: Store, id: number): Promise<void> {
     throw new Error('This snapshot has no content: no keyring was available when it was taken.')
   assertGranted(s.path)
   const text = unseal(s.blob).toString('utf8')
-  await snapshot(store, s.path, 'rollback')
+  // A deleted file has nothing to snapshot; restoring it is the point.
+  await snapshot(store, s.path, 'rollback').catch((e) => {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+  })
   await atomicWrite(s.path, text)
 }

@@ -150,15 +150,13 @@ export const useWorkspace = create<State>((set, get) => ({
       const keep = project && groups.has(project) ? project : (scan.projects[0] ?? null)
       set({ scan })
       // Selections may point at files that no longer exist.
-      const paths = new Set(scan.files.map((f) => f.path))
+      // Re-point the pair at the fresh metadata (mtime/size) or drop files that vanished.
+      const byPath = new Map(scan.files.map((f) => [f.path, f]))
       const { left, right } = get()
-      if ((left && !paths.has(left.path)) || (right && !paths.has(right.path))) {
-        set({
-          left: left && paths.has(left.path) ? left : null,
-          right: right && paths.has(right.path) ? right : null,
-          receipt: null
-        })
-      }
+      const l = left ? (byPath.get(left.path) ?? null) : null
+      const r = right ? (byPath.get(right.path) ?? null) : null
+      if ((left && !l) || (right && !r)) set({ left: l, right: r, receipt: null })
+      else set({ left: l, right: r })
       await get().openProject(keep ?? (groups.has(UNGROUPED) ? UNGROUPED : null))
     } catch (e) {
       set({ error: message(e) })
