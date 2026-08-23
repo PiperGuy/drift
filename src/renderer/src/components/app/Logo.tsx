@@ -1,5 +1,8 @@
-/** The "D" mark from theplumbr.com: dark tile, lemon stroke and bars.
- *  `draw` plays a one-shot stroke-on entrance (bars draw, dot pops). */
+/**
+ * The Drift mark: two offset bars and a dot, on a dark tile. Source of truth is
+ * build/brand/icon.svg; this is the same geometry simplified for UI sizes.
+ * `draw` plays a one-shot entrance (bars draw on, dot pops).
+ */
 export function Logo({
   size = 24,
   draw = false
@@ -24,17 +27,17 @@ export function Logo({
         rx="7.5"
         fill="none"
         stroke="#c8ff4d"
-        strokeOpacity="0.35"
+        strokeOpacity="0.3"
       />
       <path
-        d="M8 10h16M8 16h9M8 22h16"
+        d="M8 12h13M11.5 20h13"
         pathLength={1}
         stroke="#c8ff4d"
-        strokeWidth="2.4"
+        strokeWidth="3.2"
         strokeLinecap="round"
         fill="none"
       />
-      <circle cx="22" cy="16" r="2.2" fill="#c8ff4d" />
+      <circle cx="8" cy="20" r="1.8" fill="#c8ff4d" />
     </svg>
   )
 }
