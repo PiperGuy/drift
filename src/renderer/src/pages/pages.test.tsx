@@ -143,7 +143,12 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
   await act(() => useWorkspace.getState().grant())
   // First Git project opens by default with its environment matrix.
   const nav = screen.getByRole('navigation', { name: 'Projects' })
-  assert.equal(within(nav).getAllByRole('button').length, 3)
+  // Three project buttons plus the root's own remove control.
+  const projectButtons = within(nav)
+    .getAllByRole('button')
+    .filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Remove '))
+  assert.equal(projectButtons.length, 3)
+  assert.ok(within(nav).getByRole('button', { name: 'Remove /ws' }))
   assert.ok(within(nav).getByText('no Git project'))
   const present = screen.getByRole('list', { name: 'Environments present' })
   assert.match(present.textContent!, /●\.env.*○local.*●staging.*○preview.*●production/)

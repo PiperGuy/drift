@@ -96,10 +96,13 @@ export async function statRef(ref: string): Promise<Stat> {
     const s = await stat(r.path)
     return { mtimeMs: s.mtimeMs, size: s.size, mode: s.mode }
   }
-  const out = (await sshExec(r.host, `stat -c '%Y %s' ${q(r.path)}`)).trim()
-  const [m, s] = out.split(' ').map(Number)
-  if (!Number.isFinite(m)) throw new Error(`${ref}: not found`)
-  return { mtimeMs: m * 1000, size: s }
+  // %y carries nanoseconds ("2026-08-23 10:00:00.123456789 +0000"); %Y alone is whole seconds,
+  // too coarse for the write guard.
+  const out = (await sshExec(r.host, `stat -c '%Y %s %y' ${q(r.path)}`)).trim()
+  const m = /^(\d+) (\d+) \S+ \d\d:\d\d:\d\d(?:\.(\d+))?/.exec(out)
+  if (!m) throw new Error(`${ref}: not found`)
+  const frac = m[3] ? Number(`0.${m[3]}`) : 0
+  return { mtimeMs: Number(m[1]) * 1000 + frac * 1000, size: Number(m[2]) }
 }
 
 /** Temp file next to the target, then rename over it. Same guarantee locally and remotely. */
@@ -185,12 +188,12 @@ async function scanSsh(root: string, host: string, path: string): Promise<ScanRe
     .filter((d) => d !== '.git')
     .map((d) => `-name ${q(d)}`)
     .join(' -o ')
-  // One round trip: env files with mtime/size, a separator, then every .git directory.
+  // One round trip: env files with mtime/size, a separator, then every .git (dir, or file for worktrees).
   const script =
     `cd ${q(path)} || exit 2; ` +
-    `find . \\( ${prune} \\) -prune -o -type f -name '.env*' -print0 | xargs -0 -r stat -c '%Y %s %n'; ` +
+    `find . \\( ${prune} \\) -prune -o -type f -name '.env*' -print0 | xargs -0 -r stat -c '%Y %s %y %n'; ` +
     `echo __DRIFT_GIT__; ` +
-    `find . \\( ${pruneNoGit} \\) -prune -o -type d -name .git -print -prune; ` +
+    `find . \\( ${pruneNoGit} \\) -prune -o -name .git -print -prune; ` +
     `echo __DRIFT_DIRS__; ` +
     `find . \\( ${prune} \\) -prune -o -type d -print | wc -l`
   const out = await sshExec(host, script, 120_000)
@@ -207,9 +210,10 @@ async function scanSsh(root: string, host: string, path: string): Promise<ScanRe
     .sort((a, b) => b.length - a.length)
   const files: EnvFileInfo[] = []
   for (const line of filesPart.split('\n')) {
-    const m = /^(\d+) (\d+) \.\/(.+)$/.exec(line)
+    // Same shape and precision as statRef, so the write guard compares like with like.
+    const m = /^(\d+) (\d+) \S+ \d\d:\d\d:\d\d(?:\.(\d+))? \S+ \.\/(.+)$/.exec(line)
     if (!m) continue
-    const rel = m[3]
+    const rel = m[4]
     const name = posix.basename(rel)
     if (!ENV_FILE.test(name)) continue
     const project = gitDirs.find((g) => g === '.' || rel === g || rel.startsWith(g + '/')) ?? null
@@ -219,7 +223,7 @@ async function scanSsh(root: string, host: string, path: string): Promise<ScanRe
       rel,
       name,
       project,
-      modifiedAt: Number(m[1]) * 1000,
+      modifiedAt: Number(m[1]) * 1000 + (m[3] ? Number(`0.${m[3]}`) * 1000 : 0),
       size: Number(m[2])
     })
   }

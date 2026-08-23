@@ -157,6 +157,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspaceRemove, (_e, raw: unknown) => {
+    assertUnlocked(store)
     const path = RootPath.parse(raw)
     revokeRoot(path)
     store.forgetRoot(path)

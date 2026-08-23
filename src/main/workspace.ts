@@ -1,6 +1,6 @@
 import { sep, resolve } from 'node:path'
 import type { ScanResult } from '@shared/channels'
-import { isRemote, scanRoot } from './fs'
+import { isRemote, parseRef, scanRoot, sshRef } from './fs'
 
 /**
  * Roots the user granted: local folders from the OS picker, or ssh://host/path
@@ -8,7 +8,12 @@ import { isRemote, scanRoot } from './fs'
  */
 const granted = new Set<string>()
 
-const norm = (root: string): string => (isRemote(root) ? root.replace(/\/+$/, '') : resolve(root))
+const norm = (root: string): string => {
+  if (!isRemote(root)) return resolve(root)
+  const r = parseRef(root) as { host: string; path: string }
+  // `/` stays `/`; anything else loses trailing slashes.
+  return sshRef(r.host, r.path.replace(/\/+$/, '') || '/')
+}
 
 export function grantRoot(root: string): void {
   granted.add(norm(root))
@@ -24,7 +29,9 @@ export function isGranted(ref: string): boolean {
   const p = isRemote(ref) ? ref : resolve(ref)
   for (const root of granted) {
     if (p === root) return true
-    if (isRemote(root) ? p.startsWith(root + '/') : p.startsWith(root + sep)) return true
+    if (isRemote(root)) {
+      if (p.startsWith(root.endsWith('/') ? root : root + '/')) return true
+    } else if (p.startsWith(root + sep)) return true
   }
   return false
 }

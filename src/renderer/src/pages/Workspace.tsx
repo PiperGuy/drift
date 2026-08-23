@@ -361,103 +361,106 @@ export function WorkspacePage(): React.JSX.Element {
                 </button>
               )}
             </div>
-            {visibleGroups.length === 0 && (
+            {roots.map((rootInfo) => {
+              const mine = visibleGroups.filter((g) => g.root === rootInfo.path)
+              if (q && mine.length === 0) return null
+              return (
+                <div key={rootInfo.path} className="contents">
+                  <div className="mt-1 flex w-full items-center gap-1.5 px-1 pt-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase first:mt-0">
+                    {rootInfo.kind === 'ssh' ? (
+                      <Server className="size-3" />
+                    ) : (
+                      <FolderOpen className="size-3" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate normal-case" title={rootInfo.path}>
+                      {rootInfo.label}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${rootInfo.label}`}
+                      title="Stop reading this root"
+                      onClick={() => {
+                        if (window.confirm(`Stop reading ${rootInfo.label}? Files are untouched.`))
+                          void removeRoot(rootInfo.path)
+                      }}
+                      className="rounded p-0.5 hover:bg-accent hover:text-foreground"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                  {mine.length === 0 && (
+                    <p className="px-2 py-2 text-xs text-muted-foreground">No .env files here.</p>
+                  )}
+                  {mine.map((g) => {
+                    const { key, name, fs } = g
+                    const active = key === project
+                    const kinds = [...new Set(fs.map((f) => envKind(f.name)))]
+                    return (
+                      <div key={key} className="contents">
+                        <button
+                          type="button"
+                          aria-current={active ? 'true' : undefined}
+                          onClick={() => {
+                            // Switching projects closes the open file; unsaved edits ask first.
+                            if (
+                              viewerDirty &&
+                              !window.confirm('Discard unsaved changes to the open file?')
+                            )
+                              return
+                            setOpen(null)
+                            setViewerDirty(false)
+                            void openProject(key)
+                          }}
+                          className={cn(
+                            'press flex shrink-0 flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) @3xl:w-full',
+                            active
+                              ? 'elev border-border bg-card'
+                              : 'border-transparent hover:bg-accent/50'
+                          )}
+                        >
+                          <span className="flex items-center gap-1.5 text-[13px]">
+                            {name === UNGROUPED ? (
+                              <span className="text-muted-foreground">no Git project</span>
+                            ) : (
+                              <>
+                                <GitBranch
+                                  className="size-3.5 shrink-0 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate font-medium">
+                                  {name === '.' ? 'root' : name}
+                                </span>
+                              </>
+                            )}
+                            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                              {fs.length}
+                            </span>
+                          </span>
+                          <span className="flex flex-wrap gap-1">
+                            {ENV_KINDS.filter((k) => kinds.includes(k)).map((k) => (
+                              <span
+                                key={k}
+                                className={cn(
+                                  'rounded-sm border px-1 font-mono text-[10px]',
+                                  KIND_TONE[k]
+                                )}
+                              >
+                                {KIND_LABEL[k]}
+                              </span>
+                            ))}
+                          </span>
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+            {q && visibleGroups.length === 0 && (
               <p className="px-2 py-3 text-xs text-muted-foreground">
                 No project, file or key matches.
               </p>
             )}
-            {visibleGroups.map((g, gi) => {
-              const { key, name, fs } = g
-              const active = key === project
-              const kinds = [...new Set(fs.map((f) => envKind(f.name)))]
-              const rootInfo = roots.find((r) => r.path === g.root)
-              const firstOfRoot = gi === 0 || visibleGroups[gi - 1].root !== g.root
-              return (
-                <div key={key} className="contents">
-                  {firstOfRoot && roots.length > 1 && (
-                    <div className="mt-1 flex w-full items-center gap-1.5 px-1 pt-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase first:mt-0">
-                      {rootInfo?.kind === 'ssh' ? (
-                        <Server className="size-3" />
-                      ) : (
-                        <FolderOpen className="size-3" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate normal-case" title={rootInfo?.path}>
-                        {rootInfo?.label ?? g.root}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${rootInfo?.label ?? g.root}`}
-                        title="Remove this root"
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Stop reading ${rootInfo?.label ?? g.root}? Files are untouched.`
-                            )
-                          )
-                            void removeRoot(g.root)
-                        }}
-                        className="rounded p-0.5 hover:bg-accent hover:text-foreground"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    aria-current={active ? 'true' : undefined}
-                    onClick={() => {
-                      // Switching projects closes the open file; unsaved edits ask first.
-                      if (
-                        viewerDirty &&
-                        !window.confirm('Discard unsaved changes to the open file?')
-                      )
-                        return
-                      setOpen(null)
-                      setViewerDirty(false)
-                      void openProject(key)
-                    }}
-                    className={cn(
-                      'press flex shrink-0 flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) @3xl:w-full',
-                      active
-                        ? 'elev border-border bg-card'
-                        : 'border-transparent hover:bg-accent/50'
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 text-[13px]">
-                      {name === UNGROUPED ? (
-                        <span className="text-muted-foreground">no Git project</span>
-                      ) : (
-                        <>
-                          <GitBranch
-                            className="size-3.5 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                          />
-                          <span className="truncate font-medium">
-                            {name === '.' ? 'root' : name}
-                          </span>
-                        </>
-                      )}
-                      <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                        {fs.length}
-                      </span>
-                    </span>
-                    <span className="flex flex-wrap gap-1">
-                      {ENV_KINDS.filter((k) => kinds.includes(k)).map((k) => (
-                        <span
-                          key={k}
-                          className={cn(
-                            'rounded-sm border px-1 font-mono text-[10px]',
-                            KIND_TONE[k]
-                          )}
-                        >
-                          {KIND_LABEL[k]}
-                        </span>
-                      ))}
-                    </span>
-                  </button>
-                </div>
-              )
-            })}
           </nav>
 
           <section className="flex min-h-0 min-w-0 flex-col" aria-label="Environment overview">
