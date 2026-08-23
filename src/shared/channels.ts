@@ -36,7 +36,6 @@ export const Channels = {
   envReveal: 'env:reveal',
   updateEvent: 'update:event',
   updateInstall: 'update:install',
-  trayCompare: 'tray:compare',
   envApply: 'env:apply',
   historySnapshots: 'history:snapshots',
   historyRollback: 'history:rollback',
@@ -229,8 +228,6 @@ export type PlumbrApi = {
   ) => Promise<{ values: Record<string, string>; method: RevealResult['method'] }>
   onUpdate: (cb: (e: UpdateEvent) => void) => () => void
   installUpdate: () => Promise<void>
-  /** Tray → "Compare again". */
-  onTrayCompare: (cb: () => void) => () => void
   /** `Host` aliases from ~/.ssh/config, for the source dialog. Names only. */
   sshHosts: () => Promise<string[]>
   /** macOS full-screen transitions. */

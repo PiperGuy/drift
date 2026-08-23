@@ -208,8 +208,6 @@ Snapshots restores any earlier state (snapshotting the current one first).
 
 ## Native behaviour
 
-- **Tray / menu bar:** the last receipt at a glance, Open, Compare again, Quit. Closing the window
-  parks the app in the tray; Quit is explicit.
 - **Reveal a value:** Workspace → click a file → eye on a key. Main asks the OS first: Touch ID on
   macOS, a polkit prompt on Linux, a native confirm dialog on Windows (Electron has no Windows
   Hello API). The value is shown for 20 s and the reveal is logged by key name only.

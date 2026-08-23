@@ -117,7 +117,6 @@ const plumbr: PlumbrApi = {
   setValues: vi.fn(async () => ({ written: [], snapshot: 1 })),
   onUpdate: vi.fn(() => () => {}),
   installUpdate: vi.fn(async () => {}),
-  onTrayCompare: vi.fn(() => () => {}),
   onFullscreen: vi.fn(() => () => {}),
   sshHosts: vi.fn(async () => []),
   appInfo: vi.fn(async () => ({

@@ -24,7 +24,6 @@ import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
 import { osAuth } from './auth'
-import { trayReceipt } from './tray'
 import { revealAllValues, revealValue } from './env'
 import {
   ApplyRequestSchema,
@@ -258,7 +257,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     assertUnlocked(store)
     const { left, right, ignore } = CompareRequest.parse(raw)
     const receipt = await compareFiles(left, right, ignore)
-    trayReceipt(receipt)
     const id = store.saveReceipt(receipt)
     store.logEvent(
       'compare',

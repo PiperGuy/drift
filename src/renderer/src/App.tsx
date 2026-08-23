@@ -67,15 +67,8 @@ export default function App(): React.JSX.Element {
     void init()
   }, [init])
 
-  // Tray → compare again; main → update lifecycle and full-screen state.
+  // Main → update lifecycle and full-screen state.
   useEffect(() => {
-    const offTray = window.plumbr.onTrayCompare(() => {
-      const s = useWorkspace.getState()
-      if (s.left && s.right) {
-        s.setPage('receipt')
-        void s.compare()
-      }
-    })
     const offUpdate = window.plumbr.onUpdate((e) => {
       if (e.kind === 'available') toast(`Downloading ${e.version} in the background`)
       else if (e.kind === 'downloaded')
@@ -86,7 +79,6 @@ export default function App(): React.JSX.Element {
     })
     const offFs = window.plumbr.onFullscreen((on) => useWorkspace.setState({ fullscreen: on }))
     return () => {
-      offTray()
       offUpdate()
       offFs()
     }

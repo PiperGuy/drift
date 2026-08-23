@@ -46,10 +46,6 @@ const plumbr: PlumbrApi = {
     const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
     ipcRenderer.on(Channels.windowFullscreen, h)
     return () => ipcRenderer.removeListener(Channels.windowFullscreen, h)
-  },
-  onTrayCompare: (cb) => {
-    ipcRenderer.on(Channels.trayCompare, cb)
-    return () => ipcRenderer.removeListener(Channels.trayCompare, cb)
   }
 }
 

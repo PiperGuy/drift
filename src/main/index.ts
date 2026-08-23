@@ -5,14 +5,11 @@ import log from 'electron-log/main'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { Channels } from '@shared/channels'
-import { createTray } from './tray'
 
 log.initialize()
 log.errorHandler.startCatching()
 
 let mainWindow: BrowserWindow | null = null
-/** True once the user chose Quit (tray, app menu, Cmd+Q): close then really closes. */
-let quitting = false
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -44,12 +41,6 @@ function createWindow(): void {
     mainWindow?.webContents.send(Channels.windowFullscreen, false)
   )
   mainWindow.on('closed', () => (mainWindow = null))
-  // Menu-bar app: closing the window parks it in the tray. Quit is explicit.
-  mainWindow.on('close', (e) => {
-    if (quitting) return
-    e.preventDefault()
-    mainWindow?.hide()
-  })
 
   // Any window.open / target=_blank goes to the system browser, never a new Electron window.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -87,11 +78,11 @@ app.whenReady().then(() => {
     mainWindow!.focus()
     return mainWindow!
   }
-  createTray(show, () => show().webContents.send(Channels.trayCompare))
-  app.on('before-quit', () => (quitting = true))
   // Dock click on macOS: the window may exist but be hidden in the tray.
   app.on('activate', () => void show())
 })
 
-// The tray keeps the app alive on every platform; Quit is explicit.
-app.on('window-all-closed', () => {})
+// No tray: closing the last window quits on Windows and Linux, as users expect.
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
