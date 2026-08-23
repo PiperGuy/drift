@@ -18,7 +18,7 @@ export const PAGES = [
 export type PageId = (typeof PAGES)[number]
 
 /** Redacted summary of one file: how many keys, how many blank. Never a value. */
-export type KeySummary = { keys: number; blank: number }
+export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
 
 /** Group label for files outside any Git project. */
 export const UNGROUPED = '(no git project)'
@@ -178,7 +178,8 @@ export const useWorkspace = create<State>((set, get) => ({
             ...s.summaries,
             [f.path]: {
               keys: shape.entries.length,
-              blank: shape.entries.filter((e) => e.fingerprint === null).length
+              blank: shape.entries.filter((e) => e.fingerprint === null).length,
+              names: shape.entries.map((e) => ({ key: e.key, blank: e.fingerprint === null }))
             }
           }
         }))

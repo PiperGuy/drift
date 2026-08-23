@@ -21,6 +21,7 @@ import { SettingsPage } from '@/pages/Settings'
 import { HistoryPage } from '@/pages/History'
 import { AgentsPage } from '@/pages/Agents'
 import { Lock } from '@/components/app/Lock'
+import { toast } from 'sonner'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
@@ -109,6 +110,29 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void init()
   }, [init])
+
+  // Tray → compare again; main → update lifecycle.
+  useEffect(() => {
+    const offTray = window.plumbr.onTrayCompare(() => {
+      const s = useWorkspace.getState()
+      if (s.left && s.right) {
+        s.setPage('receipt')
+        void s.compare()
+      }
+    })
+    const offUpdate = window.plumbr.onUpdate((e) => {
+      if (e.kind === 'available') toast(`Downloading ${e.version} in the background`)
+      else if (e.kind === 'downloaded')
+        toast(`${e.version} is ready`, {
+          duration: Infinity,
+          action: { label: 'Restart to update', onClick: () => void window.plumbr.installUpdate() }
+        })
+    })
+    return () => {
+      offTray()
+      offUpdate()
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {

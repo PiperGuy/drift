@@ -11,6 +11,7 @@ export const SettingsPatch = z.object({
   mcpEnabled: z.boolean().optional(),
   onboarded: z.boolean().optional()
 })
+export const RevealRequestSchema = z.object({ path: z.string().min(1), key: z.string().min(1) })
 export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([
   'claude-code',

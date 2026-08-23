@@ -58,6 +58,17 @@ export async function envShape(path: string): Promise<EnvShape> {
   return { path, name: basename(path), entries }
 }
 
+/**
+ * The one path where a raw value crosses to the renderer, and only for a single
+ * key, after the caller has passed OS authentication. Returns null for a key
+ * that is not in the file.
+ */
+export async function revealValue(path: string, key: string): Promise<string | null> {
+  assertGranted(path)
+  const text = await readFile(path, 'utf8')
+  return parseEnv(text).find((e) => e.key === key)?.value ?? null
+}
+
 export async function compareFiles(
   left: string,
   right: string,

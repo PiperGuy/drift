@@ -149,9 +149,22 @@ npm run release:patch   # or release:minor / release:major
 tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
 macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.AppImage`,
 `.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
-unsigned for now: macOS users open via right-click → Open the first time, Windows shows
-SmartScreen. `Actions → Release → Run workflow` builds the current branch without
+unsigned until these repository secrets exist, after which the same workflow signs and
+notarizes with no other change: `CSC_LINK` + `CSC_KEY_PASSWORD` (Developer ID Application .p12,
+base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarization),
+`WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (Windows code-signing .pfx). Unsigned: macOS users open
+via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
+
+## Native behaviour
+
+- **Tray / menu bar:** the last receipt at a glance, Open, Compare again, Quit. Closing the window
+  parks the app in the tray; Quit is explicit.
+- **Reveal a value:** Workspace → click a file → eye on a key. Main asks the OS first: Touch ID on
+  macOS, a polkit prompt on Linux, a native confirm dialog on Windows (Electron has no Windows
+  Hello API). The value is shown for 20 s and the reveal is logged by key name only.
+- **Updates:** a packaged build checks GitHub Releases 10 s after launch, downloads in the
+  background and offers "Restart to update". Settings → Updates checks on demand.
 
 ## MCP for coding agents
 

@@ -90,6 +90,10 @@ const plumbr: PlumbrApi = {
   mcpClients: vi.fn(async () => []),
   mcpInstall: vi.fn(async () => []),
   mcpUninstall: vi.fn(async () => []),
+  revealValue: vi.fn(async () => ({ value: null, method: 'dialog' as const })),
+  onUpdate: vi.fn(() => () => {}),
+  installUpdate: vi.fn(async () => {}),
+  onTrayCompare: vi.fn(() => () => {}),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',

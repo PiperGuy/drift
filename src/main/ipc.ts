@@ -21,6 +21,10 @@ import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } f
 import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
+import { osAuth } from './auth'
+import { trayReceipt } from './tray'
+import { revealValue } from './env'
+import { RevealRequestSchema } from '@shared/ipc'
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -76,7 +80,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     if (!app.isPackaged)
       return { status: 'error', message: 'Updates only work in a packaged build.' }
     try {
-      autoUpdater.autoDownload = false
       const r = await autoUpdater.checkForUpdates()
       const v = r?.updateInfo.version
       return v && v !== app.getVersion()
@@ -162,6 +165,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     assertUnlocked(store)
     const { left, right, ignore } = CompareRequest.parse(raw)
     const receipt = await compareFiles(left, right, ignore)
+    trayReceipt(receipt)
     const id = store.saveReceipt(receipt)
     store.logEvent(
       'compare',
@@ -170,6 +174,26 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     )
     return receipt
   })
+
+  ipcMain.handle(Channels.envReveal, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, key } = RevealRequestSchema.parse(raw)
+    const method = await osAuth(`Show the value of ${key}?`, getWindow())
+    const value = await revealValue(path, key)
+    store.logEvent('reveal', { path, key }, { method })
+    return { value, method }
+  })
+
+  // Background update: check shortly after launch, download silently, tell the renderer.
+  ipcMain.handle(Channels.updateInstall, () => autoUpdater.quitAndInstall())
+  if (app.isPackaged) {
+    const send = (ev: unknown): void => getWindow()?.webContents.send(Channels.updateEvent, ev)
+    autoUpdater.autoDownload = true
+    autoUpdater.on('update-available', (i) => send({ kind: 'available', version: i.version }))
+    autoUpdater.on('update-downloaded', (i) => send({ kind: 'downloaded', version: i.version }))
+    autoUpdater.on('error', (e) => send({ kind: 'error', message: e.message }))
+    setTimeout(() => void autoUpdater.checkForUpdates().catch(() => {}), 10_000)
+  }
 
   ipcMain.handle(Channels.appInfo, (): AppInfo => ({
     version: app.getVersion(),

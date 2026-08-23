@@ -24,7 +24,11 @@ export const Channels = {
   updateCheck: 'update:check',
   mcpClients: 'mcp:clients',
   mcpInstall: 'mcp:install',
-  mcpUninstall: 'mcp:uninstall'
+  mcpUninstall: 'mcp:uninstall',
+  envReveal: 'env:reveal',
+  updateEvent: 'update:event',
+  updateInstall: 'update:install',
+  trayCompare: 'tray:compare'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -51,7 +55,15 @@ export type EnvShape = { path: string; name: string; entries: KeyEntry[] }
 
 /** Append-only, redacted audit trail. Subject and detail hold paths, key names and counts. Never a value. */
 export type HistoryKind =
-  'grant' | 'scan' | 'compare' | 'forget' | 'clear' | 'license' | 'mcp_install' | 'mcp_uninstall'
+  | 'grant'
+  | 'scan'
+  | 'compare'
+  | 'forget'
+  | 'clear'
+  | 'license'
+  | 'mcp_install'
+  | 'mcp_uninstall'
+  | 'reveal'
 export type HistoryEvent = {
   id: number
   at: number
@@ -89,6 +101,14 @@ export type McpClientStatus = {
 /** User settings persisted in the store. */
 export type Settings = { mcpEnabled: boolean; onboarded: boolean }
 
+export type RevealRequest = { path: string; key: string }
+export type RevealResult = { value: string | null; method: 'touchid' | 'polkit' | 'dialog' }
+/** Pushed from main while an update downloads in the background. */
+export type UpdateEvent =
+  | { kind: 'available'; version: string }
+  | { kind: 'downloaded'; version: string }
+  | { kind: 'error'; message: string }
+
 export type UpdateResult =
   | { status: 'current'; version: string }
   | { status: 'available'; version: string }
@@ -121,4 +141,10 @@ export type PlumbrApi = {
   mcpClients: () => Promise<McpClientStatus[]>
   mcpInstall: (id: McpClientId) => Promise<McpClientStatus[]>
   mcpUninstall: (id: McpClientId) => Promise<McpClientStatus[]>
+  /** One value, after OS auth. Rejects if cancelled. */
+  revealValue: (req: RevealRequest) => Promise<RevealResult>
+  onUpdate: (cb: (e: UpdateEvent) => void) => () => void
+  installUpdate: () => Promise<void>
+  /** Tray → "Compare again". */
+  onTrayCompare: (cb: () => void) => () => void
 }

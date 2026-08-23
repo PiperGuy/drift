@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import {
   Bot,
   Eraser,
+  Eye,
   FolderOpen,
   GitCompareArrows,
   KeyRound,
@@ -22,7 +23,8 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   clear: { icon: Eraser, label: 'Cleared', tone: 'text-muted-foreground bg-muted' },
   license: { icon: KeyRound, label: 'Licensed', tone: 'text-ok bg-ok-soft' },
   mcp_install: { icon: Bot, label: 'MCP added', tone: 'text-lemon-ink bg-lemon-soft' },
-  mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' }
+  mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' },
+  reveal: { icon: Eye, label: 'Revealed', tone: 'text-bad bg-bad-soft' }
 }
 
 const base = (p: unknown): string =>
@@ -52,6 +54,8 @@ function describe(e: HistoryEvent): string {
     case 'mcp_install':
     case 'mcp_uninstall':
       return String(e.subject['client'] ?? '')
+    case 'reveal':
+      return `${e.subject['key']} in ${base(e.subject['path'])} · ${e.detail['method']}`
   }
 }
 

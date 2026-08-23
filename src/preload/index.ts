@@ -19,7 +19,18 @@ const plumbr: PlumbrApi = {
   checkUpdates: () => ipcRenderer.invoke(Channels.updateCheck),
   mcpClients: () => ipcRenderer.invoke(Channels.mcpClients),
   mcpInstall: (id) => ipcRenderer.invoke(Channels.mcpInstall, id),
-  mcpUninstall: (id) => ipcRenderer.invoke(Channels.mcpUninstall, id)
+  mcpUninstall: (id) => ipcRenderer.invoke(Channels.mcpUninstall, id),
+  revealValue: (req) => ipcRenderer.invoke(Channels.envReveal, req),
+  onUpdate: (cb) => {
+    const h = (_e: Electron.IpcRendererEvent, ev: Parameters<typeof cb>[0]): void => cb(ev)
+    ipcRenderer.on(Channels.updateEvent, h)
+    return () => ipcRenderer.removeListener(Channels.updateEvent, h)
+  },
+  installUpdate: () => ipcRenderer.invoke(Channels.updateInstall),
+  onTrayCompare: (cb) => {
+    ipcRenderer.on(Channels.trayCompare, cb)
+    return () => ipcRenderer.removeListener(Channels.trayCompare, cb)
+  }
 }
 
 contextBridge.exposeInMainWorld('plumbr', plumbr)

@@ -4,11 +4,15 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log/main'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
+import { Channels } from '@shared/channels'
+import { createTray } from './tray'
 
 log.initialize()
 log.errorHandler.startCatching()
 
 let mainWindow: BrowserWindow | null = null
+/** True once the user chose Quit (tray, app menu, Cmd+Q): close then really closes. */
+let quitting = false
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -32,6 +36,12 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => (mainWindow = null))
+  // Menu-bar app: closing the window parks it in the tray. Quit is explicit.
+  mainWindow.on('close', (e) => {
+    if (quitting) return
+    e.preventDefault()
+    mainWindow?.hide()
+  })
 
   // Any window.open / target=_blank goes to the system browser, never a new Electron window.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -53,11 +63,18 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc(() => mainWindow)
   createWindow()
+  const show = (): BrowserWindow => {
+    if (!mainWindow) createWindow()
+    mainWindow!.show()
+    mainWindow!.focus()
+    return mainWindow!
+  }
+  createTray(show, () => show().webContents.send(Channels.trayCompare))
+  app.on('before-quit', () => (quitting = true))
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+// The tray keeps the app alive on every platform; Quit is explicit.
+app.on('window-all-closed', () => {})
