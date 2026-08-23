@@ -12,6 +12,13 @@ export const SettingsPatch = z.object({
   onboarded: z.boolean().optional()
 })
 export const RevealRequestSchema = z.object({ path: z.string().min(1), key: z.string().min(1) })
+export const ApplyRequestSchema = z.object({
+  left: z.string().min(1),
+  right: z.string().min(1),
+  keys: z.array(z.string().min(1)).min(1).max(5000),
+  expectedMtime: z.number()
+})
+export const SnapshotId = z.number().int().positive()
 export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([
   'claude-code',

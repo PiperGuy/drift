@@ -91,6 +91,9 @@ const plumbr: PlumbrApi = {
   mcpInstall: vi.fn(async () => []),
   mcpUninstall: vi.fn(async () => []),
   revealValue: vi.fn(async () => ({ value: null, method: 'dialog' as const })),
+  applyPlan: vi.fn(async () => ({ written: [], skipped: [], snapshot: 1 })),
+  listSnapshots: vi.fn(async () => []),
+  rollback: vi.fn(async () => {}),
   onUpdate: vi.fn(() => () => {}),
   installUpdate: vi.fn(async () => {}),
   onTrayCompare: vi.fn(() => () => {}),
@@ -198,8 +201,23 @@ test('receipt: empty state, then classes, filters, search and a plan with no app
   assert.deepEqual(keys(), ['STRIPE_KEY'])
   fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
   assert.deepEqual(keys(), ['REDIS_URL', 'SENTRY_DSN', 'STRIPE_KEY'])
-  assert.ok(screen.getByText(/no Apply in this build/))
-  assert.equal(screen.queryByRole('button', { name: /apply/i }), null)
+  // Apply lives on the plan tab only, behind an approval dialog that lists the exact keys:
+  // add + update pre-checked, review opt-in, keep never offered. Nothing is written until "Write".
+  const applyBtn = screen.getByRole('button', { name: /Apply to B/ })
+  fireEvent.click(applyBtn)
+  const dialog = await screen.findByRole('dialog')
+  const boxes = within(dialog).getAllByRole('checkbox') as HTMLInputElement[]
+  assert.deepEqual(
+    boxes.map((b) => [b.closest('label')!.textContent!.match(/[A-Z_]+/)![0], b.checked]),
+    [
+      ['SENTRY_DSN', true],
+      ['STRIPE_KEY', true]
+    ]
+  )
+  assert.equal(plumbr.applyPlan.mock.calls.length, 0)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByRole('tab', { name: /Receipt · / }))
+  assert.equal(screen.queryByRole('button', { name: /Apply to B/ }), null)
 
   // Swapping direction clears the receipt and recomputes it.
   fireEvent.click(screen.getByRole('button', { name: 'Swap A and B' }))

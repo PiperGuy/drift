@@ -42,6 +42,9 @@ type State = {
   setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  /** Keys written this session, for the status bar. */
+  written: number
+  noteWritten: (n: number) => void
   root: string | null
   scan: ScanResult | null
   scanning: boolean
@@ -78,6 +81,8 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ onboarded: v })
   },
   setLicense: (license) => set({ license }),
+  written: 0,
+  noteWritten: (n) => set((s) => ({ written: s.written + n })),
   sidebarCollapsed: readCollapsed(),
   toggleSidebar: () =>
     set((s) => {

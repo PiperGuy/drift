@@ -24,7 +24,8 @@ import { install, statusAll, uninstall } from './mcp-clients'
 import { osAuth } from './auth'
 import { trayReceipt } from './tray'
 import { revealValue } from './env'
-import { RevealRequestSchema } from '@shared/ipc'
+import { ApplyRequestSchema, RevealRequestSchema, SnapshotId } from '@shared/ipc'
+import { applyPlan, rollback } from './write'
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -182,6 +183,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const value = await revealValue(path, key)
     store.logEvent('reveal', { path, key }, { method })
     return { value, method }
+  })
+
+  ipcMain.handle(Channels.envApply, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const req = ApplyRequestSchema.parse(raw)
+    const result = await applyPlan(store, req)
+    store.logEvent(
+      'apply',
+      { left: req.left, right: req.right, snapshot: result.snapshot },
+      { written: result.written, skipped: result.skipped }
+    )
+    return result
+  })
+  ipcMain.handle(Channels.historySnapshots, () => {
+    assertUnlocked(store)
+    return store.listSnapshots()
+  })
+  ipcMain.handle(Channels.historyRollback, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = SnapshotId.parse(raw)
+    await rollback(store, id)
+    store.logEvent('rollback', { snapshot: id, path: store.snapshotBlob(id)?.path })
   })
 
   // Background update: check shortly after launch, download silently, tell the renderer.

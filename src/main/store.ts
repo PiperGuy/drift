@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import type { DriftReceipt } from '@shared/drift'
-import type { HistoryEvent, HistoryKind } from '@shared/channels'
+import type { HistoryEvent, HistoryKind, Snapshot } from '@shared/channels'
 
 /**
  * Local store: one SQLite file in userData, opened with `node:sqlite` (built into
@@ -33,7 +33,20 @@ const MIGRATIONS: string[] = [
      subject_json TEXT NOT NULL,
      detail_json TEXT NOT NULL
    );
-   CREATE INDEX events_at ON events (at DESC);`
+   CREATE INDEX events_at ON events (at DESC);`,
+  // v2: file snapshots for rollback. blob is safeStorage-encrypted file bytes, NULL when
+  // no keyring could seal it (then the row is a shape-only record and cannot be restored).
+  `CREATE TABLE file_history (
+     id INTEGER PRIMARY KEY,
+     path TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     reason TEXT NOT NULL,
+     mtime INTEGER NOT NULL,
+     size INTEGER NOT NULL,
+     keys_json TEXT NOT NULL,
+     blob BLOB
+   );
+   CREATE INDEX file_history_path ON file_history (path, at DESC);`
 ]
 
 export type Store = ReturnType<typeof openStore>
@@ -49,6 +62,9 @@ export function openStore(file: string): {
   saveReceipt: (receipt: DriftReceipt) => number
   logEvent: (kind: HistoryKind, subject: object, detail?: object) => void
   listEvents: (limit?: number) => HistoryEvent[]
+  saveSnapshot: (s: Omit<Snapshot, 'id' | 'restorable'> & { blob: Buffer | null }) => number
+  listSnapshots: (limit?: number) => Snapshot[]
+  snapshotBlob: (id: number) => { path: string; blob: Buffer | null } | null
   close: () => void
 } {
   const db = new DatabaseSync(file)
@@ -77,7 +93,14 @@ export function openStore(file: string): {
     ),
     listEvents: db.prepare(
       'SELECT id, at, kind, subject_json, detail_json FROM events ORDER BY at DESC, id DESC LIMIT ?'
-    )
+    ),
+    insertSnapshot: db.prepare(
+      'INSERT INTO file_history (path, at, reason, mtime, size, keys_json, blob) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ),
+    listSnapshots: db.prepare(
+      'SELECT id, path, at, reason, mtime, size, keys_json, blob IS NOT NULL AS restorable FROM file_history ORDER BY at DESC, id DESC LIMIT ?'
+    ),
+    snapshotBlob: db.prepare('SELECT path, blob FROM file_history WHERE id = ?')
   }
 
   return {
@@ -87,8 +110,12 @@ export function openStore(file: string): {
     lastRoot: () => (q.lastRoot.get()?.['path'] as string | undefined) ?? null,
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
-    forgetAll: () => db.exec('DELETE FROM roots; DELETE FROM receipts; DELETE FROM events;'),
-    clearCache: () => db.exec('DELETE FROM receipts; DELETE FROM events;'),
+    forgetAll: () =>
+      db.exec(
+        'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'
+      ),
+    clearCache: () =>
+      db.exec('DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'),
     saveReceipt: (r) =>
       Number(
         q.insertReceipt.run(
@@ -109,6 +136,33 @@ export function openStore(file: string): {
         subject: JSON.parse(row['subject_json'] as string),
         detail: JSON.parse(row['detail_json'] as string)
       })),
+    saveSnapshot: (s) =>
+      Number(
+        q.insertSnapshot.run(
+          s.path,
+          s.at,
+          s.reason,
+          s.mtime,
+          s.size,
+          JSON.stringify(s.keys),
+          s.blob
+        ).lastInsertRowid
+      ),
+    listSnapshots: (limit = 200) =>
+      (q.listSnapshots.all(limit) as Record<string, unknown>[]).map((r) => ({
+        id: Number(r['id']),
+        path: r['path'] as string,
+        at: Number(r['at']),
+        reason: r['reason'] as Snapshot['reason'],
+        mtime: Number(r['mtime']),
+        size: Number(r['size']),
+        keys: JSON.parse(r['keys_json'] as string),
+        restorable: Boolean(r['restorable'])
+      })),
+    snapshotBlob: (id) => {
+      const r = q.snapshotBlob.get(id) as { path: string; blob: Uint8Array | null } | undefined
+      return r ? { path: r.path, blob: r.blob ? Buffer.from(r.blob) : null } : null
+    },
     close: () => db.close()
   }
 }

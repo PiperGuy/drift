@@ -156,6 +156,15 @@ base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarizat
 via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
 
+## Writing files
+
+The only write path is Receipt → Dry-run plan → **Apply to B…**. The dialog lists the exact keys
+(add and update pre-checked, review opt-in, keep never offered). Main then refuses if B changed
+since the plan, snapshots B into `file_history` (bytes sealed by the OS keyring), and writes a
+temp file renamed over B. Each key's assignment is copied verbatim from A, so quoting, `export`
+and trailing comments survive; B's comments, order and extra keys are untouched. History →
+Snapshots restores any earlier state (snapshotting the current one first).
+
 ## Native behaviour
 
 - **Tray / menu bar:** the last receipt at a glance, Open, Compare again, Quit. Closing the window

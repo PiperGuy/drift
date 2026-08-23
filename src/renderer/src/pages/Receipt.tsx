@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { ArrowRight, ArrowRightLeft, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, PenLine, RefreshCw, Search, X } from 'lucide-react'
 import { planSync, type DriftStatus, type SyncAction } from '@shared/drift'
 import {
   DEFAULT_VIEW,
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DEFAULT_IGNORE, useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { ApplyDialog } from '@/components/app/ApplyDialog'
 
 const OP_META: Record<SyncAction['op'], { glyph: string; tone: string }> = {
   add: { glyph: '+', tone: 'text-ok' },
@@ -45,6 +46,7 @@ export function ReceiptPage(): React.JSX.Element {
   const { left, right, receipt, comparing, compare, swap, error, setPage } = useWorkspace()
   const [view, setView] = useState<ReceiptView>(DEFAULT_VIEW)
   const [tab, setTab] = useState<'receipt' | 'plan'>('receipt')
+  const [applying, setApplying] = useState(false)
   const search = useRef<HTMLInputElement>(null)
 
   // A fresh pair has no receipt yet: run the comparison once, on real files.
@@ -221,6 +223,11 @@ export function ReceiptPage(): React.JSX.Element {
                 </button>
               )}
             </div>
+            {tab === 'plan' && plan.some((a) => a.op !== 'keep') && (
+              <Button size="sm" className="press h-7 text-xs" onClick={() => setApplying(true)}>
+                <PenLine /> Apply to B…
+              </Button>
+            )}
             {tab === 'receipt' && (
               <Button
                 variant="outline"
@@ -315,10 +322,14 @@ export function ReceiptPage(): React.JSX.Element {
           </div>
 
           <p className="shrink-0 border-t bg-card px-5 py-2 text-[11px] text-muted-foreground">
-            Descriptive only. There is no Apply in this build: nothing writes to B and nothing is
-            sent anywhere. Extra keys on B are never removed. Ignored:{' '}
+            Nothing is written until you approve an exact list of keys from the plan tab. B is
+            snapshotted first and can be rolled back from History. Extra keys on B are never
+            removed. Nothing is sent anywhere. Ignored:{' '}
             <code className="font-mono">{DEFAULT_IGNORE.join(', ')}</code>.
           </p>
+          {applying && (
+            <ApplyDialog open onOpenChange={setApplying} left={left} right={right} plan={plan} />
+          )}
         </>
       )}
     </div>

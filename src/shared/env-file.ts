@@ -38,6 +38,63 @@ export function parseEnv(text: string): RawEntry[] {
   return out
 }
 
+/**
+ * Source spans: where each assignment lives in the text, so a write can replace
+ * exactly one assignment and leave every comment, blank line and ordering alone.
+ */
+export type Span = { key: string; start: number; end: number; text: string }
+
+export function assignmentSpans(text: string): Span[] {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const out: Span[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line.trim() || line.trim().startsWith('#')) continue
+    const m = LINE.exec(line)
+    if (!m) continue
+    const start = i
+    let value = (m[2] ?? '').trim()
+    if (value.startsWith('"') && !value.slice(1).includes('"')) {
+      while (i + 1 < lines.length && !value.slice(1).includes('"')) {
+        i += 1
+        value += '\n' + lines[i]
+      }
+    }
+    out.push({ key: m[1], start, end: i, text: lines.slice(start, i + 1).join('\n') })
+  }
+  return out
+}
+
+/** The raw source of the last assignment of `key`, or null. Formatting preserved. */
+export function rawAssignment(text: string, key: string): string | null {
+  return assignmentSpans(text).findLast((s) => s.key === key)?.text ?? null
+}
+
+/**
+ * Write assignments into `text`: the last existing assignment of each key is
+ * replaced in place, new keys are appended. Nothing else changes. Pure.
+ */
+export function patchEnv(text: string, assignments: { key: string; text: string }[]): string {
+  const nl = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const spans = assignmentSpans(text)
+  const append: string[] = []
+  // Replace from the bottom so earlier indices stay valid.
+  const edits = assignments
+    .map((a) => ({ a, span: spans.findLast((s) => s.key === a.key) }))
+    .sort((x, y) => (y.span?.start ?? -1) - (x.span?.start ?? -1))
+  for (const { a, span } of edits) {
+    if (span) lines.splice(span.start, span.end - span.start + 1, ...a.text.split('\n'))
+    else append.push(a.text)
+  }
+  let out = lines.join('\n')
+  if (append.length) {
+    if (out.length && !out.endsWith('\n')) out += '\n'
+    out += append.join('\n') + '\n'
+  }
+  return nl === '\n' ? out : out.replace(/\n/g, nl)
+}
+
 /** File names that count as environment files during discovery. */
 export const ENV_FILE = /^\.env(\..+)?$/
 /** Directories never walked. */

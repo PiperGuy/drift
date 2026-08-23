@@ -28,7 +28,10 @@ export const Channels = {
   envReveal: 'env:reveal',
   updateEvent: 'update:event',
   updateInstall: 'update:install',
-  trayCompare: 'tray:compare'
+  trayCompare: 'tray:compare',
+  envApply: 'env:apply',
+  historySnapshots: 'history:snapshots',
+  historyRollback: 'history:rollback'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -64,6 +67,8 @@ export type HistoryKind =
   | 'mcp_install'
   | 'mcp_uninstall'
   | 'reveal'
+  | 'apply'
+  | 'rollback'
 export type HistoryEvent = {
   id: number
   at: number
@@ -100,6 +105,33 @@ export type McpClientStatus = {
 
 /** User settings persisted in the store. */
 export type Settings = { mcpEnabled: boolean; onboarded: boolean }
+
+/** One approved write: copy these keys' assignments from left into right. */
+export type ApplyRequest = {
+  left: string
+  right: string
+  keys: string[]
+  /** mtime the plan was made against; the write refuses if the file changed since. */
+  expectedMtime: number
+}
+export type ApplyResult = {
+  written: string[]
+  skipped: { key: string; reason: string }[]
+  snapshot: number
+}
+
+/** A file as it was just before Drift wrote to it (or restored it). Key names only in the clear. */
+export type Snapshot = {
+  id: number
+  path: string
+  at: number
+  reason: 'apply' | 'rollback'
+  mtime: number
+  size: number
+  keys: string[]
+  /** False when no keyring could seal the bytes: shape recorded, content not restorable. */
+  restorable: boolean
+}
 
 export type RevealRequest = { path: string; key: string }
 export type RevealResult = { value: string | null; method: 'touchid' | 'polkit' | 'dialog' }
@@ -147,4 +179,9 @@ export type PlumbrApi = {
   installUpdate: () => Promise<void>
   /** Tray → "Compare again". */
   onTrayCompare: (cb: () => void) => () => void
+  /** The only write path. Main snapshots the target first. */
+  applyPlan: (req: ApplyRequest) => Promise<ApplyResult>
+  listSnapshots: () => Promise<Snapshot[]>
+  /** Restore a snapshot over its file (snapshotting the current content first). */
+  rollback: (id: number) => Promise<void>
 }
