@@ -16,7 +16,7 @@ import { envKind } from '@shared/env-file'
 import { planSync } from '@shared/drift'
 import { PRODUCT } from '@shared/product'
 import { licenseState } from '@shared/license'
-import { grantRoot, scanWorkspace } from '../main/workspace'
+import { grantRoot, revokeRoots, scanWorkspace } from '../main/workspace'
 import { joinRef } from '../main/fs'
 import { compareFiles, envShape } from '../main/env'
 
@@ -45,11 +45,14 @@ function roots(): string[] {
     })
     if (lic.state === 'expired')
       throw new Error(`${PRODUCT} trial has ended. Enter a license key in the app.`)
-    const rows = db.prepare('SELECT path FROM roots ORDER BY granted_at ASC').all() as {
-      path: string
-    }[]
+    // Only the active workspace, exactly like the app.
+    const active = Number(meta('active_workspace') ?? 1)
+    const rows = db
+      .prepare('SELECT path FROM roots WHERE workspace_id = ? ORDER BY granted_at ASC')
+      .all(active) as { path: string }[]
     if (rows.length === 0)
       throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)
+    revokeRoots()
     for (const r of rows) grantRoot(r.path)
     return rows.map((r) => r.path)
   } finally {

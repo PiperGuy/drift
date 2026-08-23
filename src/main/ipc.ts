@@ -189,6 +189,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.wsRename, (_e, raw: unknown) => {
     assertUnlocked(store)
     const { id, name } = WorkspaceRename.parse(raw)
+    if (
+      store.listWorkspaces().some((w) => w.id !== id && w.name.toLowerCase() === name.toLowerCase())
+    )
+      throw new Error(`A workspace named ${name} already exists`)
     store.renameWorkspace(id, name)
   })
   ipcMain.handle(Channels.wsDelete, (_e, raw: unknown) => {

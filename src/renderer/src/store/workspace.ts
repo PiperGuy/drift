@@ -154,9 +154,11 @@ export const useWorkspace = create<State>((set, get) => ({
     await get().loadWorkspaces()
   },
   deleteWorkspace: async (id) => {
+    const wasActive = get().workspace === id
     await window.plumbr.deleteWorkspace(id)
     await get().loadWorkspaces()
-    if (get().workspace === id) await get().switchWorkspace(get().workspaces[0].id)
+    // Main already picked a fallback; re-enter it so roots, scan and selection follow.
+    if (wasActive) await get().switchWorkspace(get().workspace)
   },
   roots: [],
   scan: null,
