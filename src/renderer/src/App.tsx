@@ -231,13 +231,20 @@ export default function App(): React.JSX.Element {
         )}
         {collapsed && <div className="flex-1" />}
 
-        {/* Footer: settings, then the brand when there is room for it. */}
+        {/* Footer: the brand on the left, settings on the right. */}
         <div
           className={cn(
             'no-drag flex shrink-0 items-center border-t px-2 py-1.5',
             collapsed ? 'justify-center' : 'gap-2'
           )}
         >
+          {!collapsed && (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 pl-1 text-xs whitespace-nowrap">
+              <Logo size={16} />
+              <span className="font-semibold">{PRODUCT}</span>
+              <span className="text-[10px] text-muted-foreground">by {MAKER}</span>
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setPage('settings')}
@@ -251,13 +258,6 @@ export default function App(): React.JSX.Element {
           >
             <Settings className="size-4" aria-hidden="true" />
           </button>
-          {!collapsed && (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap">
-              <Logo size={16} />
-              <span className="font-semibold">{PRODUCT}</span>
-              <span className="text-[10px] text-muted-foreground">by {MAKER}</span>
-            </span>
-          )}
         </div>
         {!collapsed && <Resizer />}
       </aside>
