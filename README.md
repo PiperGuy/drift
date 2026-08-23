@@ -165,7 +165,7 @@ deleted. Everything else (history, snapshots, settings, licence) is shared.
 
 ## Roots: several folders, and servers over SSH
 
-Workspace → **Add folder** grants another local folder; **Add SSH** grants `ssh://host/path`.
+Workspace → **Add source** opens the source picker: Local folder, SSH server, EC2 instance (SSH) work today; Docker, ECS, HashiCorp Vault and AWS Secrets Manager show their configuration and are marked coming soon.
 Every root is listed in the sidebar with its projects; the × on a root stops reading it (files
 untouched). SSH uses the `ssh` binary on your machine, so `~/.ssh/config` aliases, keys, the
 agent, ProxyJump and known_hosts all apply and Drift stores no credentials. Key/agent auth only

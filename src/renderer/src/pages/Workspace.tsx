@@ -5,6 +5,7 @@ import {
   FolderOpen,
   GitBranch,
   RefreshCw,
+  Plug,
   Search,
   Server,
   ShieldCheck,
@@ -20,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { UNGROUPED, projectKey, splitProjectKey, useWorkspace } from '@/store/workspace'
-import { AddSshDialog } from '@/components/app/AddSshDialog'
+import { AddSourceDialog } from '@/components/app/AddSourceDialog'
 import { cn } from '@/lib/utils'
 import { PRODUCT } from '@shared/product'
 
@@ -68,7 +69,7 @@ const FACTS: { k: string; t: string; d: string }[] = [
   }
 ]
 
-function Onboarding({ grant, ssh }: { grant: () => void; ssh: () => void }): React.JSX.Element {
+function Onboarding({ add }: { add: () => void }): React.JSX.Element {
   return (
     <div className="relative flex h-full items-center justify-center overflow-auto p-8">
       <Lattice className="absolute inset-0 size-full [mask-image:radial-gradient(ellipse_at_center,transparent_22%,black_80%)]" />
@@ -113,11 +114,8 @@ function Onboarding({ grant, ssh }: { grant: () => void; ssh: () => void }): Rea
           ))}
         </dl>
         <div className="mt-8 flex items-center gap-4" style={{ '--i': 11 } as CSSProperties}>
-          <Button onClick={grant} autoFocus size="lg" className="press cta-pulse">
-            <FolderOpen /> Choose a folder
-          </Button>
-          <Button onClick={ssh} variant="outline" size="lg" className="press">
-            <Server /> Add a server over SSH
+          <Button onClick={add} autoFocus size="lg" className="press cta-pulse">
+            <Plug /> Select a source
           </Button>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only what you
@@ -202,7 +200,6 @@ export function WorkspacePage(): React.JSX.Element {
     scan,
     scanning,
     error,
-    grant,
     removeRoot,
     rescan,
     project,
@@ -262,8 +259,8 @@ export function WorkspacePage(): React.JSX.Element {
   if (roots.length === 0)
     return (
       <>
-        <Onboarding grant={grant} ssh={() => setSshOpen(true)} />
-        {sshOpen && <AddSshDialog onClose={() => setSshOpen(false)} />}
+        <Onboarding add={() => setSshOpen(true)} />
+        {sshOpen && <AddSourceDialog onClose={() => setSshOpen(false)} />}
       </>
     )
 
@@ -300,13 +297,10 @@ export function WorkspacePage(): React.JSX.Element {
           <RefreshCw className={cn(scanning && 'animate-spin motion-reduce:animate-none')} />
           {scanning ? 'Scanning' : 'Rescan'}
         </Button>
-        <Button variant="outline" size="sm" onClick={grant}>
-          <FolderOpen /> Add folder
-        </Button>
         <Button variant="outline" size="sm" onClick={() => setSshOpen(true)}>
-          <Server /> Add SSH
+          <Plug /> Add source
         </Button>
-        {sshOpen && <AddSshDialog onClose={() => setSshOpen(false)} />}
+        {sshOpen && <AddSourceDialog onClose={() => setSshOpen(false)} />}
       </header>
 
       {scanning && <div className="scanline -mt-0.5 shrink-0" aria-hidden="true" />}
