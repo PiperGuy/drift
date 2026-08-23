@@ -414,8 +414,9 @@ export function EnvViewer({
         </div>
       )}
       <p className="shrink-0 border-t px-4 py-1.5 text-[10px] text-muted-foreground">
-        Values are masks until you reveal one key behind OS authentication, for 20 s. Format
-        rewrites spelling only, through the same snapshot and atomic write as Apply.
+        Values are masks. The first reveal asks the OS to confirm it is you; later reveals this
+        session do not. Each shows for 20 s and is logged by key name. Format rewrites spelling
+        only, through the same snapshot and atomic write as Apply.
       </p>
     </div>
   )
