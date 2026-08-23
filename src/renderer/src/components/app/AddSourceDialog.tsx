@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box,
   Cloud,
@@ -134,9 +134,13 @@ export function AddSourceDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [f, setF] = useState<Record<string, string>>(
-    mode === 'edit' ? seed.f : { path: '/', user: 'ubuntu', region: 'us-east-1' }
+    mode === 'edit' ? seed.f : { path: '', user: 'ubuntu', region: 'us-east-1' }
   )
   const [repick, setRepick] = useState(false)
+  const [aliases, setAliases] = useState<string[]>([])
+  useEffect(() => {
+    window.plumbr.sshHosts().then(setAliases)
+  }, [])
   const set = (k: string, v: string): void => setF((x) => ({ ...x, [k]: v }))
   const src = SOURCES.find((s) => s.id === kind)!
 
@@ -297,7 +301,11 @@ export function AddSourceDialog({
                   ) : (
                     <Field
                       label="Host"
-                      hint="Anything ssh accepts: user@host, or an alias from ~/.ssh/config."
+                      hint={
+                        aliases.length
+                          ? 'An alias from ~/.ssh/config (suggested below), or user@host. Aliases carry their key and user.'
+                          : 'Anything ssh accepts: user@host, or an alias from ~/.ssh/config.'
+                      }
                     >
                       <Input
                         value={f['host'] ?? ''}
@@ -306,8 +314,28 @@ export function AddSourceDialog({
                         className="h-8 font-mono text-xs"
                         spellCheck={false}
                         autoComplete="off"
+                        list="ssh-aliases"
                         autoFocus
                       />
+                      <datalist id="ssh-aliases">
+                        {aliases.map((a) => (
+                          <option key={a} value={a} />
+                        ))}
+                      </datalist>
+                      {aliases.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {aliases.slice(0, 8).map((a) => (
+                            <button
+                              key={a}
+                              type="button"
+                              onClick={() => set('host', a)}
+                              className="rounded-md border bg-muted px-1.5 py-0.5 font-mono text-[11px] hover:bg-accent"
+                            >
+                              {a}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </Field>
                   )}
                   <Field
@@ -317,7 +345,7 @@ export function AddSourceDialog({
                     <Input
                       value={f['path'] ?? ''}
                       onChange={(e) => set('path', e.target.value)}
-                      placeholder="/srv/apps"
+                      placeholder="/home/deploy/apps  (absolute path)"
                       className="h-8 font-mono text-xs"
                       spellCheck={false}
                       autoComplete="off"

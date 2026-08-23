@@ -44,7 +44,8 @@ export const Channels = {
   envFormat: 'env:format',
   envSet: 'env:set',
   envRevealAll: 'env:reveal-all',
-  windowFullscreen: 'window:fullscreen'
+  windowFullscreen: 'window:fullscreen',
+  sshHosts: 'ssh:hosts'
 } as const
 
 /** A source the user switches between: a named set of roots (usually one). `path` is its first root. */
@@ -230,6 +231,8 @@ export type PlumbrApi = {
   installUpdate: () => Promise<void>
   /** Tray → "Compare again". */
   onTrayCompare: (cb: () => void) => () => void
+  /** `Host` aliases from ~/.ssh/config, for the source dialog. Names only. */
+  sshHosts: () => Promise<string[]>
   /** macOS full-screen transitions. */
   onFullscreen: (cb: (on: boolean) => void) => () => void
   /** The only write path. Main snapshots the target first. */

@@ -101,6 +101,22 @@ export async function sshExec(host: string, script: string, timeoutMs = 60_000):
   }
 }
 
+/** Host aliases declared in ~/.ssh/config (no wildcards). Read-only, names only. */
+export async function sshConfigHosts(): Promise<string[]> {
+  try {
+    const text = await readFile(join(homedir(), '.ssh', 'config'), 'utf8')
+    const out = new Set<string>()
+    for (const line of text.split('\n')) {
+      const m = /^\s*Host\s+(.+)$/i.exec(line)
+      if (!m) continue
+      for (const h of m[1].trim().split(/\s+/)) if (!/[*?!]/.test(h)) out.add(h)
+    }
+    return [...out].sort()
+  } catch {
+    return []
+  }
+}
+
 // ---------- primitives ----------
 
 export type Stat = { mtimeMs: number; size: number; mode?: number }

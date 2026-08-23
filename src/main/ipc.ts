@@ -17,7 +17,7 @@ import {
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log/main'
 import { grantRoot, revokeRoot, revokeRoots, scanWorkspace } from './workspace'
-import { baseRef, checkRemoteRoot, parseRef, readText, sshRef } from './fs'
+import { baseRef, checkRemoteRoot, parseRef, readText, sshConfigHosts, sshRef } from './fs'
 import type { RootInfo } from '@shared/channels'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
@@ -147,6 +147,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     store.logEvent('grant', { root })
     return toRoot(root, null)
   })
+
+  ipcMain.handle(Channels.sshHosts, () => sshConfigHosts())
 
   ipcMain.handle(Channels.workspaceAddSsh, async (_e, raw: unknown) => {
     assertUnlocked(store)
