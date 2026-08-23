@@ -46,7 +46,9 @@ const MIGRATIONS: string[] = [
      keys_json TEXT NOT NULL,
      blob BLOB
    );
-   CREATE INDEX file_history_path ON file_history (path, at DESC);`
+   CREATE INDEX file_history_path ON file_history (path, at DESC);`,
+  // v3: a root may be a local folder or ssh://host/path; label shown in the sidebar.
+  `ALTER TABLE roots ADD COLUMN label TEXT;`
 ]
 
 export type Store = ReturnType<typeof openStore>
@@ -54,8 +56,9 @@ export type Store = ReturnType<typeof openStore>
 export function openStore(file: string): {
   getMeta: (key: string) => string | null
   setMeta: (key: string, value: string) => void
-  rememberRoot: (path: string) => void
-  lastRoot: () => string | null
+  rememberRoot: (path: string, label?: string) => void
+  forgetRoot: (path: string) => void
+  listRoots: () => { path: string; label: string | null }[]
   touchRoot: (path: string) => void
   forgetAll: () => void
   clearCache: () => void
@@ -81,9 +84,10 @@ export function openStore(file: string): {
     getMeta: db.prepare('SELECT value FROM meta WHERE key = ?'),
     setMeta: db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)'),
     upsertRoot: db.prepare(
-      'INSERT INTO roots (path, granted_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at'
+      'INSERT INTO roots (path, granted_at, label) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at, label = excluded.label'
     ),
-    lastRoot: db.prepare('SELECT path FROM roots ORDER BY granted_at DESC LIMIT 1'),
+    deleteRoot: db.prepare('DELETE FROM roots WHERE path = ?'),
+    listRoots: db.prepare('SELECT path, label FROM roots ORDER BY granted_at ASC'),
     touchRoot: db.prepare('UPDATE roots SET last_scan_at = ? WHERE path = ?'),
     insertReceipt: db.prepare(
       'INSERT INTO receipts (left_ref, right_ref, created_at, rows_json, counts_json) VALUES (?, ?, ?, ?, ?)'
@@ -106,8 +110,10 @@ export function openStore(file: string): {
   return {
     getMeta: (key) => (q.getMeta.get(key)?.['value'] as string | undefined) ?? null,
     setMeta: (key, value) => void q.setMeta.run(key, value),
-    rememberRoot: (path) => void q.upsertRoot.run(path, Date.now()),
-    lastRoot: () => (q.lastRoot.get()?.['path'] as string | undefined) ?? null,
+    rememberRoot: (path, label) => void q.upsertRoot.run(path, Date.now(), label ?? null),
+    forgetRoot: (path) => void q.deleteRoot.run(path),
+    listRoots: () =>
+      (q.listRoots.all() as { path: string; label: string | null }[]).map((r) => ({ ...r })),
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
     forgetAll: () =>

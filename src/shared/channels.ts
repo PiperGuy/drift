@@ -15,6 +15,8 @@ export const Channels = {
   envCompare: 'env:compare',
   appInfo: 'app:info',
   workspaceRecent: 'workspace:recent',
+  workspaceAddSsh: 'workspace:add-ssh',
+  workspaceRemove: 'workspace:remove',
   historyList: 'history:list',
   dataForget: 'data:forget',
   dataClear: 'data:clear',
@@ -38,9 +40,15 @@ export const Channels = {
   envSet: 'env:set'
 } as const
 
+/** A granted root: a local folder or ssh://host/path. */
+export type RootInfo = { path: string; kind: 'local' | 'ssh'; label: string }
+
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
 export type EnvFileInfo = {
+  /** Local absolute path, or ssh://host/path. */
   path: string
+  /** The granted root this file was found under. */
+  root: string
   /** Path relative to the workspace root. */
   rel: string
   name: string
@@ -63,6 +71,7 @@ export type EnvShape = { path: string; name: string; entries: KeyEntry[] }
 /** Append-only, redacted audit trail. Subject and detail hold paths, key names and counts. Never a value. */
 export type HistoryKind =
   | 'grant'
+  | 'revoke'
   | 'scan'
   | 'compare'
   | 'forget'
@@ -170,13 +179,16 @@ export type CompareRequest = { left: string; right: string; ignore?: string[] }
 
 /** What the preload exposes on `window.plumbr`. */
 export type PlumbrApi = {
-  pickWorkspace: () => Promise<string | null>
+  pickWorkspace: () => Promise<RootInfo | null>
   scanWorkspace: (req: ScanRequest) => Promise<ScanResult>
   envShape: (req: ShapeRequest) => Promise<EnvShape>
   compareEnv: (req: CompareRequest) => Promise<DriftReceipt>
   appInfo: () => Promise<AppInfo>
-  /** Last granted root, re-granted for this session, or null on first run. */
-  recentWorkspace: () => Promise<string | null>
+  /** Every remembered root, re-granted for this session. Empty on first run. */
+  recentWorkspaces: () => Promise<RootInfo[]>
+  /** Verify over ssh, then grant and remember. `host` is anything ssh accepts: alias, user@host. */
+  addSshRoot: (req: { host: string; path: string }) => Promise<RootInfo>
+  removeRoot: (path: string) => Promise<void>
   listHistory: () => Promise<HistoryEvent[]>
   /** Wipe roots, receipts and history. Keeps the fingerprint key. */
   forgetData: () => Promise<void>

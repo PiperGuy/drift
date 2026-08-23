@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DriftReceipt } from '@shared/drift'
-import type { EnvFileInfo, ScanResult } from '@shared/channels'
+import type { EnvFileInfo, RootInfo, ScanResult } from '@shared/channels'
 import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
@@ -22,6 +22,13 @@ export type KeySummary = { keys: number; blank: number; names: { key: string; bl
 
 /** Group label for files outside any Git project. */
 export const UNGROUPED = '(no git project)'
+/** Projects are unique per root: the selection key carries both. */
+export const projectKey = (f: { root: string; project: string | null }): string =>
+  `${f.root}\u0000${f.project ?? UNGROUPED}`
+export const splitProjectKey = (k: string): { root: string; project: string } => {
+  const i = k.indexOf('\u0000')
+  return { root: k.slice(0, i), project: k.slice(i + 1) }
+}
 
 const COLLAPSED_KEY = 'plumbr-sidebar-collapsed'
 const readCollapsed = (): boolean => {
@@ -48,11 +55,13 @@ type State = {
   /** Keys written this session, for the status bar. */
   written: number
   noteWritten: (n: number) => void
-  root: string | null
+  /** Granted roots: local folders and ssh://host/path. */
+  roots: RootInfo[]
+  /** Files from every root, merged. `scan.root` is '' when several roots are granted. */
   scan: ScanResult | null
   scanning: boolean
   error: string | null
-  /** Project (relative path) whose environment overview is open. */
+  /** projectKey() of the project whose overview is open. */
   project: string | null
   /** Per-file key summaries, loaded when a project is opened. */
   summaries: Record<string, KeySummary>
@@ -65,7 +74,10 @@ type State = {
   init: () => Promise<void>
   /** Back to first run. */
   reset: () => void
+  /** OS folder picker → add a local root. */
   grant: () => Promise<void>
+  addSsh: (host: string, path: string) => Promise<void>
+  removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
   pick: (side: 'left' | 'right', file: EnvFileInfo | null) => void
@@ -99,7 +111,7 @@ export const useWorkspace = create<State>((set, get) => ({
       }
       return { sidebarCollapsed: next }
     }),
-  root: null,
+  roots: [],
   scan: null,
   scanning: false,
   error: null,
@@ -127,15 +139,15 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ license })
     if (license.state === 'expired') return
     set({ onboarded: (await window.plumbr.getSettings()).onboarded })
-    const root = await window.plumbr.recentWorkspace()
-    if (!root) return
-    set({ root })
+    const roots = await window.plumbr.recentWorkspaces()
+    if (roots.length === 0) return
+    set({ roots })
     await get().rescan()
   },
 
   reset: () =>
     set({
-      root: null,
+      roots: [],
       scan: null,
       project: null,
       summaries: {},
@@ -151,19 +163,66 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ viewerDirty: false })
     const root = await window.plumbr.pickWorkspace()
     if (!root) return
-    set({ root, scan: null, project: null, summaries: {}, left: null, right: null, receipt: null })
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
     await get().rescan()
   },
 
+  addSsh: async (host, path) => {
+    const root = await window.plumbr.addSshRoot({ host, path })
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    await get().rescan()
+  },
+
+  removeRoot: async (path) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    await window.plumbr.removeRoot(path)
+    set((s) => {
+      const drop = (f: EnvFileInfo | null): EnvFileInfo | null => (f && f.root === path ? null : f)
+      const left = drop(s.left)
+      const right = drop(s.right)
+      return {
+        viewerDirty: false,
+        roots: s.roots.filter((r) => r.path !== path),
+        left,
+        right,
+        receipt: left === s.left && right === s.right ? s.receipt : null,
+        project: s.project && splitProjectKey(s.project).root === path ? null : s.project
+      }
+    })
+    if (get().roots.length === 0) set({ scan: null, project: null, summaries: {} })
+    else await get().rescan()
+  },
+
   rescan: async () => {
-    const { root, project } = get()
-    if (!root) return
+    const { roots, project } = get()
+    if (roots.length === 0) return
     set({ scanning: true, error: null })
     try {
-      const scan = await window.plumbr.scanWorkspace({ root })
+      // Each root scans independently; one failing root reports, the others still load.
+      const results = await Promise.allSettled(
+        roots.map((r) => window.plumbr.scanWorkspace({ root: r.path }))
+      )
+      const ok = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      const failed = results
+        .map((r, i) => (r.status === 'rejected' ? `${roots[i].label}: ${message(r.reason)}` : null))
+        .filter((m): m is string => m !== null)
+      if (ok.length === 0) throw new Error(failed.join('\n'))
+      if (failed.length) set({ error: failed.join('\n') })
+      const files = ok.flatMap((s) => s.files)
+      const scan: ScanResult = {
+        root: roots.length === 1 ? roots[0].path : '',
+        files,
+        projects: [...new Set(files.map(projectKey))],
+        scannedDirs: ok.reduce((n, s) => n + s.scannedDirs, 0),
+        durationMs: Math.max(...ok.map((s) => s.durationMs))
+      }
       // Summaries are only dropped once a fresh scan has replaced the file list.
       set({ summaries: {} })
-      const groups = new Set(scan.files.map((f) => f.project ?? UNGROUPED))
+      const groups = new Set(files.map(projectKey))
       const keep = project && groups.has(project) ? project : (scan.projects[0] ?? null)
       set({ scan })
       // Selections may point at files that no longer exist.
@@ -174,7 +233,7 @@ export const useWorkspace = create<State>((set, get) => ({
       const r = right ? (byPath.get(right.path) ?? null) : null
       if ((left && !l) || (right && !r)) set({ left: l, right: r, receipt: null })
       else set({ left: l, right: r })
-      await get().openProject(keep ?? (groups.has(UNGROUPED) ? UNGROUPED : null))
+      await get().openProject(keep)
     } catch (e) {
       set({ error: message(e) })
     } finally {
@@ -186,9 +245,7 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ project })
     const { scan, summaries } = get()
     if (!project || !scan) return
-    const todo = scan.files.filter(
-      (f) => (f.project ?? UNGROUPED) === project && !(f.path in summaries)
-    )
+    const todo = scan.files.filter((f) => projectKey(f) === project && !(f.path in summaries))
     // ponytail: one envShape call per file, sequential. Batch IPC if projects with 50+ env files show up.
     for (const f of todo) {
       try {

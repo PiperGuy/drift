@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { baseRef, readText } from './fs'
 import { createHmac, randomBytes } from 'node:crypto'
 import { parseEnv } from '@shared/env-file'
 import { compareEnv, type DriftReceipt, type KeyEntry } from '@shared/drift'
@@ -50,12 +49,12 @@ export function fingerprint(value: string): string {
 /** Read a granted file and return its redacted shape. Raw values die here. */
 export async function envShape(path: string): Promise<EnvShape> {
   assertGranted(path)
-  const text = await readFile(path, 'utf8')
+  const text = await readText(path)
   const entries: KeyEntry[] = parseEnv(text).map(({ key, value }) => ({
     key,
     fingerprint: value === '' ? null : fingerprint(value)
   }))
-  return { path, name: basename(path), entries }
+  return { path, name: baseRef(path), entries }
 }
 
 /**
@@ -65,7 +64,7 @@ export async function envShape(path: string): Promise<EnvShape> {
  */
 export async function revealValue(path: string, key: string): Promise<string | null> {
   assertGranted(path)
-  const text = await readFile(path, 'utf8')
+  const text = await readText(path)
   // Last assignment wins, matching dotenv and the fingerprint used in receipts.
   return parseEnv(text).findLast((e) => e.key === key)?.value ?? null
 }

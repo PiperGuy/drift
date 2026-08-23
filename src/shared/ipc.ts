@@ -6,6 +6,11 @@ import { z } from 'zod'
 
 export * from './channels'
 
+export const SshRootRequest = z.object({
+  host: z.string().regex(/^[A-Za-z0-9._@-]+$/),
+  path: z.string().regex(/^\//)
+})
+export const RootPath = z.string().min(1)
 export const ScanRequest = z.object({ root: z.string().min(1) })
 export const SettingsPatch = z.object({
   mcpEnabled: z.boolean().optional(),

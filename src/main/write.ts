@@ -1,6 +1,4 @@
-import { readFile, writeFile, rename, stat, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { readText, statRef, writeAtomic } from './fs'
 import { safeStorage } from 'electron'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
 import { formatEnv, renderAssignment } from '@shared/env-lint'
@@ -34,42 +32,28 @@ function unseal(blob: Buffer): Buffer {
 }
 
 async function snapshot(store: Store, path: string, reason: Snapshot['reason']): Promise<number> {
-  const [bytes, st] = await Promise.all([readFile(path), stat(path)])
+  const [text, st] = await Promise.all([readText(path), statRef(path)])
+  const bytes = Buffer.from(text, 'utf8')
   return store.saveSnapshot({
     path,
     at: Date.now(),
     reason,
     mtime: st.mtimeMs,
     size: st.size,
-    keys: parseEnv(bytes.toString('utf8')).map((e) => e.key),
+    keys: parseEnv(text).map((e) => e.key),
     blob: seal(bytes)
   })
-}
-
-async function atomicWrite(path: string, text: string): Promise<void> {
-  const tmp = join(dirname(path), `.${randomBytes(6).toString('hex')}.drift-tmp`)
-  const mode = (await stat(path).catch(() => null))?.mode
-  try {
-    await writeFile(tmp, text, mode !== undefined ? { mode } : undefined)
-    await rename(tmp, path)
-  } catch (e) {
-    await unlink(tmp).catch(() => {})
-    throw e
-  }
 }
 
 export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyResult> {
   assertGranted(req.left)
   assertGranted(req.right)
-  const st = await stat(req.right)
+  const st = await statRef(req.right)
   // Allow sub-millisecond jitter across filesystems, refuse a real change.
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1) {
     throw new Error(`${req.right} changed since this plan was made. Compare again, then apply.`)
   }
-  const [leftText, rightText] = await Promise.all([
-    readFile(req.left, 'utf8'),
-    readFile(req.right, 'utf8')
-  ])
+  const [leftText, rightText] = await Promise.all([readText(req.left), readText(req.right)])
   const leftValues = new Map(parseEnv(leftText).map((e) => [e.key, e.value]))
   const assignments: { key: string; text: string }[] = []
   const skipped: ApplyResult['skipped'] = []
@@ -83,13 +67,13 @@ export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyR
   const snap = await snapshot(store, req.right, 'apply')
   // Re-check right before the rename: sealing the snapshot took time and another
   // process may have written B meanwhile. Patch against what is on disk now.
-  const st2 = await stat(req.right)
+  const st2 = await statRef(req.right)
   if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size) {
     throw new Error(
       `${req.right} changed while preparing the write. Rescan, compare again, then apply.`
     )
   }
-  await atomicWrite(req.right, patchEnv(rightText, assignments))
+  await writeAtomic(req.right, patchEnv(rightText, assignments))
   return { written: assignments.map((a) => a.key), skipped, snapshot: snap }
 }
 
@@ -100,10 +84,10 @@ export async function formatFile(
   expectedMtime: number
 ): Promise<FormatResult> {
   assertGranted(path)
-  const st = await stat(path)
+  const st = await statRef(path)
   if (Math.abs(st.mtimeMs - expectedMtime) > 1)
     throw new Error(`${path} changed since it was opened. Rescan, then format.`)
-  const before = await readFile(path, 'utf8')
+  const before = await readText(path)
   const after = formatEnv(before)
   if (after === before) return { changed: 0, snapshot: null }
   const a = before.split(/\r?\n/)
@@ -111,29 +95,29 @@ export async function formatFile(
   let changed = 0
   for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) changed++
   const snap = await snapshot(store, path, 'format')
-  const st2 = await stat(path)
+  const st2 = await statRef(path)
   if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size)
     throw new Error(`${path} changed while preparing the write. Rescan, then format.`)
-  await atomicWrite(path, after)
+  await writeAtomic(path, after)
   return { changed, snapshot: snap }
 }
 
 /** Write user-typed values: update in place or append. Same guards and snapshot as apply. */
 export async function setValues(store: Store, req: SetRequest): Promise<SetResult> {
   assertGranted(req.path)
-  const st = await stat(req.path)
+  const st = await statRef(req.path)
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1)
     throw new Error(`${req.path} changed since it was opened. Rescan, then edit again.`)
-  const text = await readFile(req.path, 'utf8')
+  const text = await readText(req.path)
   const assignments = req.entries.map((e) => ({
     key: e.key,
     text: renderAssignment(text, e.key, e.value)
   }))
   const snap = await snapshot(store, req.path, 'edit')
-  const st2 = await stat(req.path)
+  const st2 = await statRef(req.path)
   if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size)
     throw new Error(`${req.path} changed while preparing the write. Rescan, then edit again.`)
-  await atomicWrite(req.path, patchEnv(text, assignments))
+  await writeAtomic(req.path, patchEnv(text, assignments))
   return { written: assignments.map((a) => a.key), snapshot: snap }
 }
 
@@ -148,5 +132,5 @@ export async function rollback(store: Store, id: number): Promise<void> {
   await snapshot(store, s.path, 'rollback').catch((e) => {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
   })
-  await atomicWrite(s.path, text)
+  await writeAtomic(s.path, text)
 }

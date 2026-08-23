@@ -6,6 +6,7 @@ import {
   GitBranch,
   RefreshCw,
   Search,
+  Server,
   ShieldCheck,
   X
 } from 'lucide-react'
@@ -18,7 +19,8 @@ import { fmtAgo, fmtSize } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { UNGROUPED, useWorkspace } from '@/store/workspace'
+import { UNGROUPED, projectKey, splitProjectKey, useWorkspace } from '@/store/workspace'
+import { AddSshDialog } from '@/components/app/AddSshDialog'
 import { cn } from '@/lib/utils'
 import { PRODUCT } from '@shared/product'
 
@@ -193,11 +195,12 @@ function PairBar(): React.JSX.Element {
 
 export function WorkspacePage(): React.JSX.Element {
   const {
-    root,
+    roots,
     scan,
     scanning,
     error,
     grant,
+    removeRoot,
     rescan,
     project,
     openProject,
@@ -207,16 +210,23 @@ export function WorkspacePage(): React.JSX.Element {
     pick
   } = useWorkspace()
 
-  const groups = useMemo(() => {
-    const m = new Map<string, EnvFileInfo[]>()
+  type Group = { key: string; root: string; name: string; fs: EnvFileInfo[] }
+  const groups = useMemo<Group[]>(() => {
+    const m = new Map<string, Group>()
     for (const f of scan?.files ?? []) {
-      const k = f.project ?? UNGROUPED
-      m.set(k, [...(m.get(k) ?? []), f])
+      const key = projectKey(f)
+      const g = m.get(key) ?? { key, root: f.root, name: f.project ?? UNGROUPED, fs: [] }
+      g.fs.push(f)
+      m.set(key, g)
     }
-    return [...m.entries()].sort(([a], [b]) =>
-      a === UNGROUPED ? 1 : b === UNGROUPED ? -1 : a.localeCompare(b)
+    const order = new Map(roots.map((r, i) => [r.path, i]))
+    return [...m.values()].sort(
+      (a, b) =>
+        (order.get(a.root) ?? 0) - (order.get(b.root) ?? 0) ||
+        (a.name === UNGROUPED ? 1 : b.name === UNGROUPED ? -1 : a.name.localeCompare(b.name))
     )
-  }, [scan])
+  }, [scan, roots])
+  const [sshOpen, setSshOpen] = useState(false)
 
   const [open, setOpen] = useState<EnvFileInfo | null>(null)
   const openPath = open?.path ?? null
@@ -243,15 +253,18 @@ export function WorkspacePage(): React.JSX.Element {
     f.rel.toLowerCase().includes(q) ||
     (summaries[f.path]?.names.some((k) => k.key.toLowerCase().includes(q)) ?? false)
   const visibleGroups = q
-    ? groups.filter(([name, fs]) => name.toLowerCase().includes(q) || fs.some(fileMatches))
+    ? groups.filter((g) => g.name.toLowerCase().includes(q) || g.fs.some(fileMatches))
     : groups
 
-  if (!root) return <Onboarding grant={grant} />
+  if (roots.length === 0) return <Onboarding grant={grant} />
 
-  const allFiles = groups.find(([k]) => k === project)?.[1] ?? []
+  const allFiles = groups.find((g) => g.key === project)?.fs ?? []
   // A query that matched the project name keeps every file; otherwise narrow to matching files.
+  const selected = project ? splitProjectKey(project) : null
   const files =
-    q && !(project ?? '').toLowerCase().includes(q) ? allFiles.filter(fileMatches) : allFiles
+    q && !(selected?.project ?? '').toLowerCase().includes(q)
+      ? allFiles.filter(fileMatches)
+      : allFiles
   const present = new Map<EnvKind, number>()
   for (const f of files) present.set(envKind(f.name), (present.get(envKind(f.name)) ?? 0) + 1)
 
@@ -260,8 +273,13 @@ export function WorkspacePage(): React.JSX.Element {
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Workspace</h1>
-          <p className="truncate font-mono text-[11px] text-muted-foreground" title={root}>
-            {root}
+          <p
+            className="truncate font-mono text-[11px] text-muted-foreground"
+            title={roots.map((r) => r.label).join('\n')}
+          >
+            {roots.length === 1
+              ? roots[0].label
+              : `${roots.length} roots · ${roots.filter((r) => r.kind === 'ssh').length} over ssh`}
           </p>
         </div>
         {scan && !scanning && (
@@ -274,8 +292,12 @@ export function WorkspacePage(): React.JSX.Element {
           {scanning ? 'Scanning' : 'Rescan'}
         </Button>
         <Button variant="outline" size="sm" onClick={grant}>
-          <FolderOpen /> Change root
+          <FolderOpen /> Add folder
         </Button>
+        <Button variant="outline" size="sm" onClick={() => setSshOpen(true)}>
+          <Server /> Add SSH
+        </Button>
+        {sshOpen && <AddSshDialog onClose={() => setSshOpen(false)} />}
       </header>
 
       {scanning && <div className="scanline -mt-0.5 shrink-0" aria-hidden="true" />}
@@ -344,54 +366,96 @@ export function WorkspacePage(): React.JSX.Element {
                 No project, file or key matches.
               </p>
             )}
-            {visibleGroups.map(([name, fs]) => {
-              const active = name === project
+            {visibleGroups.map((g, gi) => {
+              const { key, name, fs } = g
+              const active = key === project
               const kinds = [...new Set(fs.map((f) => envKind(f.name)))]
+              const rootInfo = roots.find((r) => r.path === g.root)
+              const firstOfRoot = gi === 0 || visibleGroups[gi - 1].root !== g.root
               return (
-                <button
-                  key={name}
-                  type="button"
-                  aria-current={active ? 'true' : undefined}
-                  onClick={() => {
-                    // Switching projects closes the open file; unsaved edits ask first.
-                    if (viewerDirty && !window.confirm('Discard unsaved changes to the open file?'))
-                      return
-                    setOpen(null)
-                    setViewerDirty(false)
-                    void openProject(name)
-                  }}
-                  className={cn(
-                    'press flex shrink-0 flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) @3xl:w-full',
-                    active ? 'elev border-border bg-card' : 'border-transparent hover:bg-accent/50'
-                  )}
-                >
-                  <span className="flex items-center gap-1.5 text-[13px]">
-                    {name === UNGROUPED ? (
-                      <span className="text-muted-foreground">no Git project</span>
-                    ) : (
-                      <>
-                        <GitBranch
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                        <span className="truncate font-medium">{name === '.' ? 'root' : name}</span>
-                      </>
-                    )}
-                    <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                      {fs.length}
-                    </span>
-                  </span>
-                  <span className="flex flex-wrap gap-1">
-                    {ENV_KINDS.filter((k) => kinds.includes(k)).map((k) => (
-                      <span
-                        key={k}
-                        className={cn('rounded-sm border px-1 font-mono text-[10px]', KIND_TONE[k])}
-                      >
-                        {KIND_LABEL[k]}
+                <div key={key} className="contents">
+                  {firstOfRoot && roots.length > 1 && (
+                    <div className="mt-1 flex w-full items-center gap-1.5 px-1 pt-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase first:mt-0">
+                      {rootInfo?.kind === 'ssh' ? (
+                        <Server className="size-3" />
+                      ) : (
+                        <FolderOpen className="size-3" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate normal-case" title={rootInfo?.path}>
+                        {rootInfo?.label ?? g.root}
                       </span>
-                    ))}
-                  </span>
-                </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${rootInfo?.label ?? g.root}`}
+                        title="Remove this root"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Stop reading ${rootInfo?.label ?? g.root}? Files are untouched.`
+                            )
+                          )
+                            void removeRoot(g.root)
+                        }}
+                        className="rounded p-0.5 hover:bg-accent hover:text-foreground"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    aria-current={active ? 'true' : undefined}
+                    onClick={() => {
+                      // Switching projects closes the open file; unsaved edits ask first.
+                      if (
+                        viewerDirty &&
+                        !window.confirm('Discard unsaved changes to the open file?')
+                      )
+                        return
+                      setOpen(null)
+                      setViewerDirty(false)
+                      void openProject(key)
+                    }}
+                    className={cn(
+                      'press flex shrink-0 flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) @3xl:w-full',
+                      active
+                        ? 'elev border-border bg-card'
+                        : 'border-transparent hover:bg-accent/50'
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 text-[13px]">
+                      {name === UNGROUPED ? (
+                        <span className="text-muted-foreground">no Git project</span>
+                      ) : (
+                        <>
+                          <GitBranch
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                          <span className="truncate font-medium">
+                            {name === '.' ? 'root' : name}
+                          </span>
+                        </>
+                      )}
+                      <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                        {fs.length}
+                      </span>
+                    </span>
+                    <span className="flex flex-wrap gap-1">
+                      {ENV_KINDS.filter((k) => kinds.includes(k)).map((k) => (
+                        <span
+                          key={k}
+                          className={cn(
+                            'rounded-sm border px-1 font-mono text-[10px]',
+                            KIND_TONE[k]
+                          )}
+                        >
+                          {KIND_LABEL[k]}
+                        </span>
+                      ))}
+                    </span>
+                  </button>
+                </div>
               )
             })}
           </nav>
@@ -413,11 +477,11 @@ export function WorkspacePage(): React.JSX.Element {
                   {project && (
                     <div className="border-b px-5 py-3.5">
                       <h2 className="text-sm font-semibold tracking-tight">
-                        {project === UNGROUPED
+                        {selected?.project === UNGROUPED
                           ? 'Files outside any Git project'
-                          : project === '.'
-                            ? root
-                            : project}
+                          : selected?.project === '.'
+                            ? (roots.find((r) => r.path === selected.root)?.label ?? selected.root)
+                            : selected?.project}
                       </h2>
                       <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Environments present">
                         {CANON.map((k) => {

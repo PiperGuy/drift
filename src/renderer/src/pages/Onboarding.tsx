@@ -93,7 +93,7 @@ export function OnboardingPage(): React.JSX.Element {
   const [step, setStep] = useState(0)
   const [info, setInfo] = useState<AppInfo | null>(null)
   const {
-    root,
+    roots,
     scan,
     scanning,
     error,
@@ -239,16 +239,19 @@ export function OnboardingPage(): React.JSX.Element {
               )}
               <div className="mt-6 flex flex-wrap items-center gap-4" style={i(5)}>
                 <Button size="lg" className="press cta-pulse" onClick={grant} disabled={scanning}>
-                  <FolderOpen /> {root ? 'Choose a different folder' : 'Choose a folder'}
+                  <FolderOpen /> {roots.length ? 'Add another folder' : 'Choose a folder'}
                 </Button>
-                {root && (
-                  <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                {roots.map((r) => (
+                  <span
+                    key={r.path}
+                    className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
+                  >
                     <Check className="size-3.5 text-ok" aria-hidden="true" />
-                    <span className="max-w-sm truncate" title={root}>
-                      {root}
+                    <span className="max-w-sm truncate" title={r.path}>
+                      {r.label}
                     </span>
                   </span>
-                )}
+                ))}
               </div>
               {scanning && <div className="scanline mt-4" aria-hidden="true" />}
               {error && !scanning && (

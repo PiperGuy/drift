@@ -6,7 +6,8 @@ import { useWorkspace } from '@/store/workspace'
  * and the guarantees this build actually enforces (no writes, no network).
  */
 export function StatusBar(): React.JSX.Element {
-  const root = useWorkspace((s) => s.root)
+  const roots = useWorkspace((s) => s.roots)
+  const root = roots.length === 1 ? roots[0].label : roots.length ? `${roots.length} roots` : null
   const scan = useWorkspace((s) => s.scan)
   const scanning = useWorkspace((s) => s.scanning)
   const license = useWorkspace((s) => s.license)

@@ -16,7 +16,9 @@ import {
 } from '@shared/ipc'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log/main'
-import { grantRoot, revokeRoots, scanWorkspace } from './workspace'
+import { grantRoot, revokeRoot, revokeRoots, scanWorkspace } from './workspace'
+import { baseRef, checkRemoteRoot, parseRef, readText, sshRef } from './fs'
+import type { RootInfo } from '@shared/channels'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
@@ -29,15 +31,24 @@ import {
   FormatRequestSchema,
   RevealRequestSchema,
   SetRequestSchema,
+  SshRootRequest,
+  RootPath,
   SnapshotId,
   ViewRequestSchema
 } from '@shared/ipc'
 import { applyPlan, formatFile, rollback, setValues } from './write'
 import { viewEnv } from '@shared/env-lint'
 import { envKind } from '@shared/env-file'
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
 import { assertGranted } from './workspace'
+
+const toRoot = (path: string, label: string | null): RootInfo => {
+  const r = parseRef(path)
+  return {
+    path,
+    kind: r.kind,
+    label: label ?? (r.kind === 'ssh' ? `${r.host}:${r.path}` : path)
+  }
+}
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -131,14 +142,32 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     grantRoot(root)
     store.rememberRoot(root)
     store.logEvent('grant', { root })
-    return root
+    return toRoot(root, null)
+  })
+
+  ipcMain.handle(Channels.workspaceAddSsh, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { host, path } = SshRootRequest.parse(raw)
+    await checkRemoteRoot(host, path)
+    const root = sshRef(host, path.replace(/\/+$/, '') || '/')
+    grantRoot(root)
+    store.rememberRoot(root)
+    store.logEvent('grant', { root })
+    return toRoot(root, null)
+  })
+
+  ipcMain.handle(Channels.workspaceRemove, (_e, raw: unknown) => {
+    const path = RootPath.parse(raw)
+    revokeRoot(path)
+    store.forgetRoot(path)
+    store.logEvent('revoke', { root: path })
   })
 
   ipcMain.handle(Channels.workspaceRecent, () => {
     assertUnlocked(store)
-    const root = store.lastRoot()
-    if (root) grantRoot(root)
-    return root
+    const roots = store.listRoots()
+    for (const r of roots) grantRoot(r.path)
+    return roots.map((r) => toRoot(r.path, r.label))
   })
 
   ipcMain.handle(Channels.historyList, () => {
@@ -215,8 +244,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     assertUnlocked(store)
     const { path } = ViewRequestSchema.parse(raw)
     assertGranted(path)
-    const text = await readFile(path, 'utf8')
-    return viewEnv(text, { example: envKind(basename(path)) === 'example' })
+    const text = await readText(path)
+    return viewEnv(text, { example: envKind(baseRef(path)) === 'example' })
   })
   ipcMain.handle(Channels.envFormat, async (_e, raw: unknown) => {
     assertUnlocked(store)

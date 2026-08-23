@@ -19,7 +19,7 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
   const file = join(dir, 'plumbr.db')
   try {
     let s = openStore(file)
-    assert.equal(s.lastRoot(), null)
+    assert.deepEqual(s.listRoots(), [])
     assert.equal(s.getMeta('fingerprint_key_ref'), null)
     s.setMeta('fingerprint_key_ref', 'sealed')
     s.rememberRoot('/ws')
@@ -30,7 +30,7 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
 
     // Reopen: migrations are idempotent, data is still there, newest first.
     s = openStore(file)
-    assert.equal(s.lastRoot(), '/ws')
+    assert.deepEqual(s.listRoots(), [{ path: '/ws', label: null }])
     assert.equal(s.getMeta('fingerprint_key_ref'), 'sealed')
     const events = s.listEvents()
     assert.deepEqual(
@@ -42,7 +42,7 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
     assert.ok(!JSON.stringify(events).includes('postgres'))
 
     s.forgetAll()
-    assert.equal(s.lastRoot(), null)
+    assert.deepEqual(s.listRoots(), [])
     assert.equal(s.listEvents().length, 0)
     assert.equal(s.getMeta('fingerprint_key_ref'), 'sealed')
     s.close()

@@ -8,7 +8,6 @@
  * counts and dry-run plans. Never a value, never a fingerprint, and there is no
  * tool that writes or syncs anything.
  */
-import { resolve, join } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -18,6 +17,7 @@ import { planSync } from '@shared/drift'
 import { PRODUCT } from '@shared/product'
 import { licenseState } from '@shared/license'
 import { grantRoot, scanWorkspace } from '../main/workspace'
+import { joinRef } from '../main/fs'
 import { compareFiles, envShape } from '../main/env'
 
 const dbArg = process.argv.indexOf('--db')
@@ -28,10 +28,10 @@ if (!dbPath) {
 }
 
 /**
- * The root granted in the app. Re-read per call so a new grant, the MCP toggle and
- * the license all apply immediately without restarting the client.
+ * The roots granted in the app (local folders and ssh://host/path). Re-read per
+ * call so a new grant, the MCP toggle and the license all apply immediately.
  */
-function root(): string {
+function roots(): string[] {
   const db = new DatabaseSync(dbPath!, { readOnly: true })
   try {
     const meta = (k: string): string | null =>
@@ -45,18 +45,30 @@ function root(): string {
     })
     if (lic.state === 'expired')
       throw new Error(`${PRODUCT} trial has ended. Enter a license key in the app.`)
-    const row = db.prepare('SELECT path FROM roots ORDER BY granted_at DESC LIMIT 1').get()
-    const path = row?.['path'] as string | undefined
-    if (!path) throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)
-    grantRoot(path)
-    return path
+    const rows = db.prepare('SELECT path FROM roots ORDER BY granted_at ASC').all() as {
+      path: string
+    }[]
+    if (rows.length === 0)
+      throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)
+    for (const r of rows) grantRoot(r.path)
+    return rows.map((r) => r.path)
   } finally {
     db.close()
   }
 }
 
-/** Paths from the client are relative to the root; assertGranted in env.ts refuses anything outside. */
-const abs = (rel: string): string => resolve(join(root(), rel))
+/**
+ * Paths from the client are `<root>` + relative path as returned by list_projects.
+ * With one root the root may be omitted. assertGranted refuses anything outside.
+ */
+const abs = (rel: string, root?: string): string => {
+  const all = roots()
+  const r = root ?? (all.length === 1 ? all[0] : null)
+  if (!r) throw new Error('Several roots are granted: pass `root` from list_projects.')
+  if (!all.includes(r)) throw new Error(`Unknown root ${r}`)
+  return joinRef(r, rel)
+}
+const rootParam = z.string().optional().describe('Root from list_projects; optional with one root')
 
 const text = (v: unknown): { content: { type: 'text'; text: string }[] } => ({
   content: [{ type: 'text', text: JSON.stringify(v, null, 2) }]
@@ -73,19 +85,23 @@ server.registerTool(
     inputSchema: {}
   },
   async () => {
-    const scan = await scanWorkspace(root())
-    const projects: Record<string, object[]> = {}
-    for (const f of scan.files) {
-      const p = f.project ?? '(no git project)'
-      ;(projects[p] ??= []).push({
-        rel: f.rel,
-        name: f.name,
-        kind: envKind(f.name),
-        size: f.size,
-        modifiedAt: new Date(f.modifiedAt).toISOString()
-      })
+    const out: { root: string; projects: Record<string, object[]> }[] = []
+    for (const root of roots()) {
+      const scan = await scanWorkspace(root)
+      const projects: Record<string, object[]> = {}
+      for (const f of scan.files) {
+        const p = f.project ?? '(no git project)'
+        ;(projects[p] ??= []).push({
+          rel: f.rel,
+          name: f.name,
+          kind: envKind(f.name),
+          size: f.size,
+          modifiedAt: new Date(f.modifiedAt).toISOString()
+        })
+      }
+      out.push({ root, projects })
     }
-    return text({ root: scan.root, projects })
+    return text({ roots: out })
   }
 )
 
@@ -95,10 +111,10 @@ server.registerTool(
     title: 'Env file status',
     description:
       'Key names of one env file with which are blank. Values are never returned. `path` is relative to the workspace root, as given by list_projects.',
-    inputSchema: { path: z.string().min(1) }
+    inputSchema: { path: z.string().min(1), root: rootParam }
   },
-  async ({ path }) => {
-    const shape = await envShape(abs(path))
+  async ({ path, root }) => {
+    const shape = await envShape(abs(path, root))
     return text({
       path,
       keys: shape.entries.map((e) => e.key),
@@ -116,11 +132,12 @@ server.registerTool(
     inputSchema: {
       left: z.string().min(1),
       right: z.string().min(1),
-      ignore: z.array(z.string()).default(['NODE_ENV'])
+      ignore: z.array(z.string()).default(['NODE_ENV']),
+      root: rootParam
     }
   },
-  async ({ left, right, ignore }) => {
-    const r = await compareFiles(abs(left), abs(right), ignore)
+  async ({ left, right, ignore, root }) => {
+    const r = await compareFiles(abs(left, root), abs(right, root), ignore)
     return text({ left, right, clean: r.clean, counts: r.counts, rows: r.rows })
   }
 )
@@ -134,11 +151,12 @@ server.registerTool(
     inputSchema: {
       left: z.string().min(1),
       right: z.string().min(1),
-      ignore: z.array(z.string()).default(['NODE_ENV'])
+      ignore: z.array(z.string()).default(['NODE_ENV']),
+      root: rootParam
     }
   },
-  async ({ left, right, ignore }) => {
-    const r = await compareFiles(abs(left), abs(right), ignore)
+  async ({ left, right, ignore, root }) => {
+    const r = await compareFiles(abs(left, root), abs(right, root), ignore)
     return text({ left, right, actions: planSync(r) })
   }
 )

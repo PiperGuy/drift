@@ -5,12 +5,13 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { act } from 'react'
 import type { EnvFileInfo, PlumbrApi, ScanResult } from '@shared/channels'
 import { compareEnv } from '@shared/drift'
-import { useWorkspace } from '@/store/workspace'
+import { projectKey, useWorkspace } from '@/store/workspace'
 import { WorkspacePage } from './Workspace'
 import { ReceiptPage } from './Receipt'
 
 const file = (rel: string, project: string | null): EnvFileInfo => ({
   path: `/ws/${rel}`,
+  root: '/ws',
   rel,
   name: rel.split('/').pop()!,
   project,
@@ -53,7 +54,7 @@ const shapes: Record<string, { key: string; fingerprint: string | null }[]> = {
 }
 
 const plumbr: PlumbrApi = {
-  pickWorkspace: vi.fn(async () => '/ws'),
+  pickWorkspace: vi.fn(async () => ({ path: '/ws', kind: 'local' as const, label: '/ws' })),
   scanWorkspace: vi.fn(async () => scan),
   envShape: vi.fn(async ({ path }) => ({
     path,
@@ -67,7 +68,13 @@ const plumbr: PlumbrApi = {
       ignore
     )
   ),
-  recentWorkspace: vi.fn(async () => null),
+  recentWorkspaces: vi.fn(async () => []),
+  addSshRoot: vi.fn(async ({ host, path }) => ({
+    path: `ssh://${host}${path}`,
+    kind: 'ssh' as const,
+    label: `${host}:${path}`
+  })),
+  removeRoot: vi.fn(async () => {}),
   listHistory: vi.fn(async () => []),
   forgetData: vi.fn(async () => {}),
   clearCache: vi.fn(async () => {}),
@@ -158,7 +165,7 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
 
   // Switching project loads that project's shapes only once.
   const calls = (plumbr.envShape as ReturnType<typeof vi.fn>).mock.calls.length
-  await act(() => useWorkspace.getState().openProject('web'))
+  await act(() => useWorkspace.getState().openProject(projectKey({ root: '/ws', project: 'web' })))
   assert.equal((plumbr.envShape as ReturnType<typeof vi.fn>).mock.calls.length, calls + 1)
 })
 
@@ -167,7 +174,12 @@ test('receipt: empty state, then classes, filters, search and a plan with no app
   assert.ok(screen.getByText('No pair selected'))
 
   await act(async () => {
-    useWorkspace.setState({ root: '/ws', scan, left: scan.files[0], right: scan.files[1] })
+    useWorkspace.setState({
+      roots: [{ path: '/ws', kind: 'local', label: '/ws' }],
+      scan,
+      left: scan.files[0],
+      right: scan.files[1]
+    })
   })
   await screen.findByText('STRIPE_KEY')
   const receipt = useWorkspace.getState().receipt!

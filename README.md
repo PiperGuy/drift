@@ -156,6 +156,17 @@ base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarizat
 via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
 
+## Roots: several folders, and servers over SSH
+
+Workspace → **Add folder** grants another local folder; **Add SSH** grants `ssh://host/path`.
+Every root is listed in the sidebar with its projects; the × on a root stops reading it (files
+untouched). SSH uses the `ssh` binary on your machine, so `~/.ssh/config` aliases, keys, the
+agent, ProxyJump and known_hosts all apply and Drift stores no credentials. Key/agent auth only
+(BatchMode). The server needs GNU coreutils (any Linux VPS). Reads, compares, reveals, edits,
+formats and rollbacks work the same on remote files: values still stay in main, writes are still
+temp-file + rename with the same mtime guard. Docker and ECS would be further backends behind the
+same seam (`src/main/fs.ts`); not built yet.
+
 ## Viewing a file
 
 Workspace → click a file name. **UI** shows a card per key: a kind guessed from the name
