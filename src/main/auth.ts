@@ -34,8 +34,9 @@ export async function osAuth(reason: string, win: BrowserWindow | null): Promise
   const opts: Electron.MessageBoxOptions = {
     type: 'warning',
     title: app.getName(),
-    message: reason,
-    detail: 'This shows the real value on screen. It is not logged or sent anywhere.',
+    message: `${app.getName()} wants to ${reason}.`,
+    detail:
+      'Values are shown on screen only, never logged or sent. You will not be asked again this session.',
     buttons: ['Reveal', 'Cancel'],
     defaultId: 1,
     cancelId: 1

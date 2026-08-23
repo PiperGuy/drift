@@ -187,10 +187,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return receipt
   })
 
+  let authed: Awaited<ReturnType<typeof osAuth>> | null = null
   ipcMain.handle(Channels.envReveal, async (_e, raw: unknown) => {
     assertUnlocked(store)
     const { path, key } = RevealRequestSchema.parse(raw)
-    const method = await osAuth(`Show the value of ${key}?`, getWindow())
+    // One OS prompt per app session: the first reveal authenticates, later ones reuse it.
+    // Every reveal is still logged by key name.
+    const method = authed ?? (authed = await osAuth('reveal environment values', getWindow()))
     const value = await revealValue(path, key)
     store.logEvent('reveal', { path, key }, { method })
     return { value, method }
