@@ -19,7 +19,7 @@ export function PlannedPage({
     <div className="dotgrid flex h-full items-center justify-center overflow-auto p-8">
       <section className="stagger w-full max-w-xl rounded-xl border border-dashed bg-card p-6">
         <div className="mb-3 inline-flex items-center gap-1.5 rounded-sm border border-warn/30 bg-warn-soft px-1.5 py-0.5 font-mono text-[11px] tracking-wide text-warn uppercase">
-          <Construction className="size-3" aria-hidden="true" /> Roadmap · not in this build
+          <Construction className="size-3" aria-hidden="true" /> Coming soon
         </div>
         <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{blurb}</p>

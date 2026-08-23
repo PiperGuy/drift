@@ -231,7 +231,7 @@ export default function App(): React.JSX.Element {
             {LOCAL.map(item)}
           </div>
           <div className="space-y-0.5">
-            <p className={cn('nav-h', collapsed && 'sr-only')}>Roadmap · not built yet</p>
+            <p className={cn('nav-h', collapsed && 'sr-only')}>Coming soon</p>
             {collapsed && <hr className="mx-2 mb-1 border-sidebar-border" aria-hidden="true" />}
             {ROADMAP.map(item)}
           </div>

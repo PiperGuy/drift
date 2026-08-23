@@ -249,7 +249,7 @@ export function SettingsPage(): React.JSX.Element {
                   className="flex items-center justify-between rounded-md border border-dashed px-2.5 py-1.5 text-xs"
                 >
                   <span>{p}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">roadmap</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">coming soon</span>
                 </li>
               ))}
             </ul>
