@@ -5,12 +5,15 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { act } from 'react'
 import type { EnvFileInfo, PlumbrApi, ScanResult } from '@shared/channels'
 import { compareEnv } from '@shared/drift'
-import { useWorkspace } from '@/store/workspace'
+import { projectKey, useWorkspace } from '@/store/workspace'
 import { WorkspacePage } from './Workspace'
+import { ProjectList } from '@/components/app/ProjectList'
+import { createRef } from 'react'
 import { ReceiptPage } from './Receipt'
 
 const file = (rel: string, project: string | null): EnvFileInfo => ({
   path: `/ws/${rel}`,
+  root: '/ws',
   rel,
   name: rel.split('/').pop()!,
   project,
@@ -53,7 +56,7 @@ const shapes: Record<string, { key: string; fingerprint: string | null }[]> = {
 }
 
 const plumbr: PlumbrApi = {
-  pickWorkspace: vi.fn(async () => '/ws'),
+  pickWorkspace: vi.fn(async () => ({ path: '/ws', kind: 'local' as const, label: '/ws' })),
   scanWorkspace: vi.fn(async () => scan),
   envShape: vi.fn(async ({ path }) => ({
     path,
@@ -67,7 +70,21 @@ const plumbr: PlumbrApi = {
       ignore
     )
   ),
-  recentWorkspace: vi.fn(async () => null),
+  recentWorkspaces: vi.fn(async () => []),
+  addSshRoot: vi.fn(async ({ host, path }) => ({
+    path: `ssh://${host}${path}`,
+    kind: 'ssh' as const,
+    label: `${host}:${path}`
+  })),
+  removeRoot: vi.fn(async () => {}),
+  listWorkspaces: vi.fn(async () => ({
+    active: 1,
+    all: [{ id: 1, name: 'Default', roots: 1, path: '/ws' }]
+  })),
+  createWorkspace: vi.fn(async (name) => ({ id: 2, name, roots: 0, path: null })),
+  renameWorkspace: vi.fn(async () => {}),
+  deleteWorkspace: vi.fn(async () => {}),
+  switchWorkspace: vi.fn(async () => []),
   listHistory: vi.fn(async () => []),
   forgetData: vi.fn(async () => {}),
   clearCache: vi.fn(async () => {}),
@@ -90,6 +107,18 @@ const plumbr: PlumbrApi = {
   mcpClients: vi.fn(async () => []),
   mcpInstall: vi.fn(async () => []),
   mcpUninstall: vi.fn(async () => []),
+  revealValue: vi.fn(async () => ({ value: null, method: 'dialog' as const })),
+  revealAll: vi.fn(async () => ({ values: {}, method: 'dialog' as const })),
+  applyPlan: vi.fn(async () => ({ written: [], skipped: [], snapshot: 1 })),
+  listSnapshots: vi.fn(async () => []),
+  rollback: vi.fn(async () => {}),
+  viewEnv: vi.fn(async () => ({ lines: [], lint: [], formatted: true })),
+  formatEnv: vi.fn(async () => ({ changed: 0, snapshot: null })),
+  setValues: vi.fn(async () => ({ written: [], snapshot: 1 })),
+  onUpdate: vi.fn(() => () => {}),
+  installUpdate: vi.fn(async () => {}),
+  onFullscreen: vi.fn(() => () => {}),
+  sshHosts: vi.fn(async () => []),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',
@@ -120,13 +149,23 @@ function assertNoFingerprints(): void {
 }
 
 test('workspace: onboarding, then grouped overview with redacted key counts', async () => {
-  render(<WorkspacePage />)
-  assert.ok(screen.getByRole('heading', { level: 1, name: /Point Drift at a folder/ }))
+  // The project list lives in the sidebar; the page shows the selected project's files.
+  render(
+    <>
+      <ProjectList searchRef={createRef<HTMLInputElement>()} />
+      <WorkspacePage />
+    </>
+  )
+  assert.ok(screen.getByRole('heading', { level: 1, name: /Add a folder or a server to Drift/ }))
 
   await act(() => useWorkspace.getState().grant())
   // First Git project opens by default with its environment matrix.
   const nav = screen.getByRole('navigation', { name: 'Projects' })
-  assert.equal(within(nav).getAllByRole('button').length, 3)
+  // Three project buttons; a single root has no remove control of its own.
+  const projectButtons = within(nav)
+    .getAllByRole('button')
+    .filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Remove '))
+  assert.equal(projectButtons.length, 3)
   assert.ok(within(nav).getByText('no Git project'))
   const present = screen.getByRole('list', { name: 'Environments present' })
   assert.match(present.textContent!, /●\.env.*○local.*●staging.*○preview.*●production/)
@@ -136,11 +175,15 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
   assert.ok(screen.getByTitle('4 keys, 0 blank'))
   assertNoFingerprints()
 
-  // Pick A and B, and the receipt becomes reachable.
-  const open = screen.getByRole('button', { name: /Open receipt/ })
+  // Nothing selected: no compare bar. Rows are buttons that open the file; compare is picked
+  // from the row's context menu (exercised via the store here; Radix menus need a real pointer).
+  assert.equal(screen.queryByRole('button', { name: /^Compare/ }), null)
+  assert.ok(screen.getByRole('button', { name: 'Open api/.env' }))
+  const [envA, envB] = scan.files
+  act(() => useWorkspace.getState().pick('left', envA))
+  const open = screen.getByRole('button', { name: /^Compare/ })
   assert.ok(open.hasAttribute('disabled'))
-  fireEvent.click(screen.getByRole('button', { name: 'Use api/.env as A' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Use api/.env.production as B' }))
+  act(() => useWorkspace.getState().pick('right', envB))
   assert.ok(!open.hasAttribute('disabled'))
   assert.equal(useWorkspace.getState().left?.rel, 'api/.env')
   fireEvent.click(open)
@@ -148,16 +191,21 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
 
   // Switching project loads that project's shapes only once.
   const calls = (plumbr.envShape as ReturnType<typeof vi.fn>).mock.calls.length
-  await act(() => useWorkspace.getState().openProject('web'))
+  await act(() => useWorkspace.getState().openProject(projectKey({ root: '/ws', project: 'web' })))
   assert.equal((plumbr.envShape as ReturnType<typeof vi.fn>).mock.calls.length, calls + 1)
 })
 
 test('receipt: empty state, then classes, filters, search and a plan with no apply', async () => {
   render(<ReceiptPage />)
-  assert.ok(screen.getByText('No pair selected'))
+  assert.ok(screen.getByText('Nothing to compare yet'))
 
   await act(async () => {
-    useWorkspace.setState({ root: '/ws', scan, left: scan.files[0], right: scan.files[1] })
+    useWorkspace.setState({
+      roots: [{ path: '/ws', kind: 'local', label: '/ws' }],
+      scan,
+      left: scan.files[0],
+      right: scan.files[1]
+    })
   })
   await screen.findByText('STRIPE_KEY')
   const receipt = useWorkspace.getState().receipt!
@@ -194,8 +242,23 @@ test('receipt: empty state, then classes, filters, search and a plan with no app
   assert.deepEqual(keys(), ['STRIPE_KEY'])
   fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
   assert.deepEqual(keys(), ['REDIS_URL', 'SENTRY_DSN', 'STRIPE_KEY'])
-  assert.ok(screen.getByText(/no Apply in this build/))
-  assert.equal(screen.queryByRole('button', { name: /apply/i }), null)
+  // Apply lives on the plan tab only, behind an approval dialog that lists the exact keys:
+  // add + update pre-checked, review opt-in, keep never offered. Nothing is written until "Write".
+  const applyBtn = screen.getByRole('button', { name: /Apply to B/ })
+  fireEvent.click(applyBtn)
+  const dialog = await screen.findByRole('dialog')
+  const boxes = within(dialog).getAllByRole('checkbox') as HTMLInputElement[]
+  assert.deepEqual(
+    boxes.map((b) => [b.closest('label')!.textContent!.match(/[A-Z_]+/)![0], b.checked]),
+    [
+      ['SENTRY_DSN', true],
+      ['STRIPE_KEY', true]
+    ]
+  )
+  assert.equal(plumbr.applyPlan.mock.calls.length, 0)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByRole('tab', { name: /Receipt · / }))
+  assert.equal(screen.queryByRole('button', { name: /Apply to B/ }), null)
 
   // Swapping direction clears the receipt and recomputes it.
   fireEvent.click(screen.getByRole('button', { name: 'Swap A and B' }))

@@ -149,9 +149,70 @@ npm run release:patch   # or release:minor / release:major
 tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
 macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.AppImage`,
 `.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
-unsigned for now: macOS users open via right-click → Open the first time, Windows shows
-SmartScreen. `Actions → Release → Run workflow` builds the current branch without
+unsigned until these repository secrets exist, after which the same workflow signs and
+notarizes with no other change: `CSC_LINK` + `CSC_KEY_PASSWORD` (Developer ID Application .p12,
+base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarization),
+`WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (Windows code-signing .pfx). Unsigned: macOS users open
+via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
+
+## Sources and the sidebar
+
+The sidebar (drag its edge to resize, ⌘/Ctrl+B to collapse) holds the **Workspace | Compare**
+switch, the **source** switcher and the project list with search (⌘/Ctrl+F). A source is a named
+folder or server; **Add source…**, **Update source…** (rename, or point it elsewhere) and
+**Remove source** live in the switcher menu, and the header has an Update source button. Switching
+sources swaps what is scanned and compared; nothing on disk changes. In the file table, click a row
+to open it and right-click for Compare as A / B, Sync and Share. Settings (gear, bottom-left) holds
+theme, licence, agents, the audit log with snapshots, and data.
+
+## Roots: several folders, and servers over SSH
+
+Workspace → **Add source** opens the source picker: Local folder, SSH server, EC2 instance (SSH) work today; Docker, ECS, HashiCorp Vault and AWS Secrets Manager show their configuration and are marked coming soon.
+Every root is listed in the sidebar with its projects; the × on a root stops reading it (files
+untouched). SSH uses the `ssh` binary on your machine, so `~/.ssh/config` aliases, keys, the
+agent, ProxyJump and known_hosts all apply and Drift stores no credentials. Key/agent auth only
+(BatchMode). The server needs GNU coreutils (any Linux VPS). Reads, compares, reveals, edits,
+formats and rollbacks work the same on remote files: values still stay in main, writes are still
+temp-file + rename with the same mtime guard. Docker and ECS would be further backends behind the
+same seam (`src/main/fs.ts`); not built yet.
+
+## Viewing a file
+
+Workspace → click a file name. **UI** shows a card per key: a kind guessed from the name
+(secret / url / number / flag / config), line, length, quoting, `export`, whether a later
+assignment shadows it, and any lint findings. **File** shows the source with line numbers,
+colouring and a lint gutter. Values are masks of the same length; the eye reveals one key
+behind OS auth for 20 s. **Format** rewrites spelling only (`KEY=value`, quotes where needed,
+whitespace, LF, final newline) via the snapshot + atomic path; meaning, order and comments are
+untouched. Lint rules: duplicate-key, invalid-line, unquoted-space, unquoted-hash,
+surrounding-space, key-case, trailing-whitespace, empty-value, no-final-newline, crlf,
+mixed-export, secret-in-example.
+
+## Editing a file
+
+In the viewer's UI mode, the pencil on a key opens an inline value field (prefilled only if you
+revealed that key; otherwise the current value stays hidden and you type a replacement). **+ Add
+key** appends a new one. Edits collect into an unsaved-changes bar; **Save** writes them through
+the same mtime-guarded snapshot + atomic path, keeping `export` prefixes and trailing comments.
+Closing the viewer or switching project with unsaved edits asks first. Keys are never deleted here.
+
+## Writing files
+
+The only write path is Receipt → Dry-run plan → **Apply to B…**. The dialog lists the exact keys
+(add and update pre-checked, review opt-in, keep never offered). Main then refuses if B changed
+since the plan, snapshots B into `file_history` (bytes sealed by the OS keyring), and writes a
+temp file renamed over B. Each key's assignment is copied verbatim from A, so quoting, `export`
+and trailing comments survive; B's comments, order and extra keys are untouched. History →
+Snapshots restores any earlier state (snapshotting the current one first).
+
+## Native behaviour
+
+- **Reveal a value:** Workspace → click a file → eye on a key. Main asks the OS first: Touch ID on
+  macOS, a polkit prompt on Linux, a native confirm dialog on Windows (Electron has no Windows
+  Hello API). The value is shown for 20 s and the reveal is logged by key name only.
+- **Updates:** a packaged build checks GitHub Releases 10 s after launch, downloads in the
+  background and offers "Restart to update". Settings → Updates checks on demand.
 
 ## MCP for coding agents
 

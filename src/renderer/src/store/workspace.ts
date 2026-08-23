@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DriftReceipt } from '@shared/drift'
-import type { EnvFileInfo, ScanResult } from '@shared/channels'
+import type { EnvFileInfo, RootInfo, ScanResult, Workspace } from '@shared/channels'
 import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
@@ -18,10 +18,23 @@ export const PAGES = [
 export type PageId = (typeof PAGES)[number]
 
 /** Redacted summary of one file: how many keys, how many blank. Never a value. */
-export type KeySummary = { keys: number; blank: number }
+/** What the Add/Update source dialog submits. */
+export type SourceSpec =
+  | { kind: 'local'; name: string }
+  | { kind: 'ssh'; name: string; host: string; path: string }
+  | { kind: 'rename'; name: string }
+
+export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
 
 /** Group label for files outside any Git project. */
 export const UNGROUPED = '(no git project)'
+/** Projects are unique per root: the selection key carries both. */
+export const projectKey = (f: { root: string; project: string | null }): string =>
+  `${f.root}\u0000${f.project ?? UNGROUPED}`
+export const splitProjectKey = (k: string): { root: string; project: string } => {
+  const i = k.indexOf('\u0000')
+  return { root: k.slice(0, i), project: k.slice(i + 1) }
+}
 
 const COLLAPSED_KEY = 'plumbr-sidebar-collapsed'
 const readCollapsed = (): boolean => {
@@ -42,11 +55,38 @@ type State = {
   setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
-  root: string | null
+  /** An open file viewer has unsaved edits: navigation and root changes must ask first. */
+  viewerDirty: boolean
+  setViewerDirty: (v: boolean) => void
+  /** File open in the viewer. Lives here so switching project or source closes it. */
+  openFile: EnvFileInfo | null
+  setOpenFile: (f: EnvFileInfo | null) => void
+  /** Workspace search: project name, file path, key name. Shared by sidebar and table. */
+  search: string
+  setSearch: (q: string) => void
+  /** Sidebar width in px (expanded). */
+  sidebarWidth: number
+  setSidebarWidth: (w: number) => void
+  /** macOS full screen hides the traffic lights; the top strip follows. */
+  fullscreen: boolean
+  /** Keys written this session, for the status bar. */
+  written: number
+  noteWritten: (n: number) => void
+  /** Named workspaces; `workspace` is the active id. */
+  workspaces: Workspace[]
+  workspace: number
+  loadWorkspaces: () => Promise<void>
+  switchWorkspace: (id: number) => Promise<void>
+  createWorkspace: (name: string, activate?: boolean) => Promise<void>
+  renameWorkspace: (id: number, name: string) => Promise<void>
+  deleteWorkspace: (id: number) => Promise<void>
+  /** Granted roots: local folders and ssh://host/path. */
+  roots: RootInfo[]
+  /** Files from every root, merged. `scan.root` is '' when several roots are granted. */
   scan: ScanResult | null
   scanning: boolean
   error: string | null
-  /** Project (relative path) whose environment overview is open. */
+  /** projectKey() of the project whose overview is open. */
   project: string | null
   /** Per-file key summaries, loaded when a project is opened. */
   summaries: Record<string, KeySummary>
@@ -59,7 +99,14 @@ type State = {
   init: () => Promise<void>
   /** Back to first run. */
   reset: () => void
-  grant: () => Promise<void>
+  /** OS folder picker → add a local root to the active source. Resolves false if cancelled. */
+  grant: () => Promise<boolean>
+  /** Create a source (a workspace with one root) and make it active. Name defaults from the root. */
+  createSource: (req: SourceSpec) => Promise<void>
+  /** Rename the active source and, if the root changed, swap it. */
+  updateSource: (req: SourceSpec) => Promise<void>
+  addSsh: (host: string, path: string) => Promise<void>
+  removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
   pick: (side: 'left' | 'right', file: EnvFileInfo | null) => void
@@ -78,6 +125,34 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ onboarded: v })
   },
   setLicense: (license) => set({ license }),
+  viewerDirty: false,
+  setViewerDirty: (v) => set({ viewerDirty: v }),
+  openFile: null,
+  setOpenFile: (f) => set({ openFile: f }),
+  search: '',
+  setSearch: (q) => set({ search: q }),
+  sidebarWidth: (() => {
+    try {
+      return Math.min(
+        480,
+        Math.max(200, Number(localStorage.getItem('plumbr-sidebar-width')) || 260)
+      )
+    } catch {
+      return 260
+    }
+  })(),
+  setSidebarWidth: (w) => {
+    const v = Math.min(480, Math.max(200, Math.round(w)))
+    try {
+      localStorage.setItem('plumbr-sidebar-width', String(v))
+    } catch {
+      /* ignore */
+    }
+    set({ sidebarWidth: v })
+  },
+  fullscreen: false,
+  written: 0,
+  noteWritten: (n) => set((s) => ({ written: s.written + n })),
   sidebarCollapsed: readCollapsed(),
   toggleSidebar: () =>
     set((s) => {
@@ -89,7 +164,49 @@ export const useWorkspace = create<State>((set, get) => ({
       }
       return { sidebarCollapsed: next }
     }),
-  root: null,
+  workspaces: [],
+  workspace: 1,
+  loadWorkspaces: async () => {
+    const { active, all } = await window.plumbr.listWorkspaces()
+    set({ workspaces: all, workspace: active })
+  },
+  switchWorkspace: async (id) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    const roots = await window.plumbr.switchWorkspace(id)
+    set({
+      workspace: id,
+      roots,
+      scan: null,
+      project: null,
+      summaries: {},
+      left: null,
+      right: null,
+      receipt: null,
+      error: null,
+      viewerDirty: false,
+      openFile: null,
+      page: 'workspace'
+    })
+    await get().loadWorkspaces()
+    if (roots.length) await get().rescan()
+  },
+  createWorkspace: async (name, activate = true) => {
+    const w = await window.plumbr.createWorkspace(name)
+    await get().loadWorkspaces()
+    if (activate) await get().switchWorkspace(w.id)
+  },
+  renameWorkspace: async (id, name) => {
+    await window.plumbr.renameWorkspace({ id, name })
+    await get().loadWorkspaces()
+  },
+  deleteWorkspace: async (id) => {
+    const wasActive = get().workspace === id
+    await window.plumbr.deleteWorkspace(id)
+    await get().loadWorkspaces()
+    // Main already picked a fallback; re-enter it so roots, scan and selection follow.
+    if (wasActive) await get().switchWorkspace(get().workspace)
+  },
+  roots: [],
   scan: null,
   scanning: false,
   error: null,
@@ -100,22 +217,33 @@ export const useWorkspace = create<State>((set, get) => ({
   receipt: null,
   comparing: false,
 
-  setPage: (page) => set({ page }),
+  setPage: (page) => {
+    const s = get()
+    if (
+      s.viewerDirty &&
+      page !== s.page &&
+      !window.confirm('Discard unsaved changes to the open file?')
+    )
+      return
+    if (page !== 'workspace') set({ viewerDirty: false })
+    set({ page })
+  },
 
   init: async () => {
     const license = await window.plumbr.getLicense()
     set({ license })
     if (license.state === 'expired') return
     set({ onboarded: (await window.plumbr.getSettings()).onboarded })
-    const root = await window.plumbr.recentWorkspace()
-    if (!root) return
-    set({ root })
+    await get().loadWorkspaces()
+    const roots = await window.plumbr.recentWorkspaces()
+    if (roots.length === 0) return
+    set({ roots })
     await get().rescan()
   },
 
   reset: () =>
     set({
-      root: null,
+      roots: [],
       scan: null,
       project: null,
       summaries: {},
@@ -127,34 +255,139 @@ export const useWorkspace = create<State>((set, get) => ({
     }),
 
   grant: async () => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?'))
+      return false
+    set({ viewerDirty: false })
     const root = await window.plumbr.pickWorkspace()
-    if (!root) return
-    set({ root, scan: null, project: null, summaries: {}, left: null, right: null, receipt: null })
+    if (!root) return false
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    void get().loadWorkspaces()
+    await get().rescan()
+    return true
+  },
+
+  createSource: async (req) => {
+    if (req.kind === 'rename') return
+    const before = get().workspace
+    const name = req.name.trim() || (req.kind === 'ssh' ? `${req.host}:${req.path}` : 'New source')
+    const w = await window.plumbr.createWorkspace(name)
+    await get().loadWorkspaces()
+    await get().switchWorkspace(w.id)
+    try {
+      if (req.kind === 'ssh') {
+        await get().addSsh(req.host, req.path)
+      } else {
+        const ok = await get().grant()
+        if (!ok) throw new Error('cancelled')
+        // Default the name from the folder when the user left it blank.
+        if (!req.name.trim()) {
+          const path = get().roots[0]?.path ?? ''
+          const base = path.split(/[\\/]/).filter(Boolean).pop()
+          if (base) await get().renameWorkspace(w.id, base)
+        }
+      }
+    } catch (e) {
+      // Nothing got connected: drop the empty source and go back.
+      await window.plumbr.deleteWorkspace(w.id).catch(() => {})
+      await get().loadWorkspaces()
+      await get().switchWorkspace(before)
+      if (!(e instanceof Error && e.message === 'cancelled')) throw e
+    }
+  },
+
+  updateSource: async (req) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    set({ viewerDirty: false, openFile: null })
+    const id = get().workspace
+    const current = get().workspaces.find((w) => w.id === id)
+    if (!current) return
+    if (req.name.trim() && req.name.trim() !== current.name)
+      await get().renameWorkspace(id, req.name.trim())
+    const old = get().roots[0]
+    if (req.kind === 'ssh') {
+      const next = `ssh://${req.host}${req.path.replace(/\/+$/, '') || '/'}`
+      if (old?.path !== next) {
+        await get().addSsh(req.host, req.path)
+        if (old) await get().removeRoot(old.path)
+      }
+    } else if (req.kind === 'local') {
+      // The caller passes kind 'local' only when the user chose a different directory.
+      const ok = await get().grant()
+      const picked = get().roots.find((r) => r.path !== old?.path)
+      if (ok && old && picked && picked.path !== old.path) await get().removeRoot(old.path)
+    }
+    await get().loadWorkspaces()
+  },
+
+  addSsh: async (host, path) => {
+    const root = await window.plumbr.addSshRoot({ host, path })
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    void get().loadWorkspaces()
     await get().rescan()
   },
 
+  removeRoot: async (path) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    await window.plumbr.removeRoot(path)
+    set((s) => {
+      const drop = (f: EnvFileInfo | null): EnvFileInfo | null => (f && f.root === path ? null : f)
+      const left = drop(s.left)
+      const right = drop(s.right)
+      return {
+        viewerDirty: false,
+        roots: s.roots.filter((r) => r.path !== path),
+        left,
+        right,
+        receipt: left === s.left && right === s.right ? s.receipt : null,
+        project: s.project && splitProjectKey(s.project).root === path ? null : s.project
+      }
+    })
+    void get().loadWorkspaces()
+    if (get().roots.length === 0) set({ scan: null, project: null, summaries: {} })
+    else await get().rescan()
+  },
+
   rescan: async () => {
-    const { root, project } = get()
-    if (!root) return
+    const { roots, project } = get()
+    if (roots.length === 0) return
     set({ scanning: true, error: null })
     try {
-      const scan = await window.plumbr.scanWorkspace({ root })
+      // Each root scans independently; one failing root reports, the others still load.
+      const results = await Promise.allSettled(
+        roots.map((r) => window.plumbr.scanWorkspace({ root: r.path }))
+      )
+      const ok = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      const failed = results
+        .map((r, i) => (r.status === 'rejected' ? `${roots[i].label}: ${message(r.reason)}` : null))
+        .filter((m): m is string => m !== null)
+      if (ok.length === 0) throw new Error(failed.join('\n'))
+      if (failed.length) set({ error: failed.join('\n') })
+      const files = ok.flatMap((s) => s.files)
+      const scan: ScanResult = {
+        root: roots.length === 1 ? roots[0].path : '',
+        files,
+        projects: [...new Set(files.map(projectKey))],
+        scannedDirs: ok.reduce((n, s) => n + s.scannedDirs, 0),
+        durationMs: Math.max(...ok.map((s) => s.durationMs))
+      }
       // Summaries are only dropped once a fresh scan has replaced the file list.
       set({ summaries: {} })
-      const groups = new Set(scan.files.map((f) => f.project ?? UNGROUPED))
+      const groups = new Set(files.map(projectKey))
       const keep = project && groups.has(project) ? project : (scan.projects[0] ?? null)
       set({ scan })
       // Selections may point at files that no longer exist.
-      const paths = new Set(scan.files.map((f) => f.path))
+      // Re-point the pair at the fresh metadata (mtime/size) or drop files that vanished.
+      const byPath = new Map(scan.files.map((f) => [f.path, f]))
       const { left, right } = get()
-      if ((left && !paths.has(left.path)) || (right && !paths.has(right.path))) {
-        set({
-          left: left && paths.has(left.path) ? left : null,
-          right: right && paths.has(right.path) ? right : null,
-          receipt: null
-        })
-      }
-      await get().openProject(keep ?? (groups.has(UNGROUPED) ? UNGROUPED : null))
+      const l = left ? (byPath.get(left.path) ?? null) : null
+      const r = right ? (byPath.get(right.path) ?? null) : null
+      if ((left && !l) || (right && !r)) set({ left: l, right: r, receipt: null })
+      else set({ left: l, right: r })
+      await get().openProject(keep)
     } catch (e) {
       set({ error: message(e) })
     } finally {
@@ -163,12 +396,10 @@ export const useWorkspace = create<State>((set, get) => ({
   },
 
   openProject: async (project) => {
-    set({ project })
+    set((s) => ({ project, openFile: s.project === project ? s.openFile : null }))
     const { scan, summaries } = get()
     if (!project || !scan) return
-    const todo = scan.files.filter(
-      (f) => (f.project ?? UNGROUPED) === project && !(f.path in summaries)
-    )
+    const todo = scan.files.filter((f) => projectKey(f) === project && !(f.path in summaries))
     // ponytail: one envShape call per file, sequential. Batch IPC if projects with 50+ env files show up.
     for (const f of todo) {
       try {
@@ -178,7 +409,8 @@ export const useWorkspace = create<State>((set, get) => ({
             ...s.summaries,
             [f.path]: {
               keys: shape.entries.length,
-              blank: shape.entries.filter((e) => e.fingerprint === null).length
+              blank: shape.entries.filter((e) => e.fingerprint === null).length,
+              names: shape.entries.map((e) => ({ key: e.key, blank: e.fingerprint === null }))
             }
           }
         }))

@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import type { DriftReceipt } from '@shared/drift'
-import type { HistoryEvent, HistoryKind } from '@shared/channels'
+import type { HistoryEvent, HistoryKind, Snapshot, Workspace } from '@shared/channels'
 
 /**
  * Local store: one SQLite file in userData, opened with `node:sqlite` (built into
@@ -33,7 +33,27 @@ const MIGRATIONS: string[] = [
      subject_json TEXT NOT NULL,
      detail_json TEXT NOT NULL
    );
-   CREATE INDEX events_at ON events (at DESC);`
+   CREATE INDEX events_at ON events (at DESC);`,
+  // v2: file snapshots for rollback. blob is safeStorage-encrypted file bytes, NULL when
+  // no keyring could seal it (then the row is a shape-only record and cannot be restored).
+  `CREATE TABLE file_history (
+     id INTEGER PRIMARY KEY,
+     path TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     reason TEXT NOT NULL,
+     mtime INTEGER NOT NULL,
+     size INTEGER NOT NULL,
+     keys_json TEXT NOT NULL,
+     blob BLOB
+   );
+   CREATE INDEX file_history_path ON file_history (path, at DESC);`,
+  // v3: a root may be a local folder or ssh://host/path; label shown in the sidebar.
+  `ALTER TABLE roots ADD COLUMN label TEXT;`,
+  // v4: named workspaces, each a set of roots. Existing roots join "Default".
+  `CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+   INSERT INTO workspaces (name, created_at) VALUES ('Default', strftime('%s','now') * 1000);
+   ALTER TABLE roots ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
+   INSERT OR IGNORE INTO meta (key, value) VALUES ('active_workspace', '1');`
 ]
 
 export type Store = ReturnType<typeof openStore>
@@ -41,14 +61,25 @@ export type Store = ReturnType<typeof openStore>
 export function openStore(file: string): {
   getMeta: (key: string) => string | null
   setMeta: (key: string, value: string) => void
-  rememberRoot: (path: string) => void
-  lastRoot: () => string | null
+  rememberRoot: (path: string, label?: string) => void
+  forgetRoot: (path: string) => void
+  /** Roots of the active workspace. */
+  listRoots: () => { path: string; label: string | null }[]
+  listWorkspaces: () => Workspace[]
+  activeWorkspace: () => number
+  setActiveWorkspace: (id: number) => void
+  createWorkspace: (name: string) => Workspace
+  renameWorkspace: (id: number, name: string) => void
+  deleteWorkspace: (id: number) => void
   touchRoot: (path: string) => void
   forgetAll: () => void
   clearCache: () => void
   saveReceipt: (receipt: DriftReceipt) => number
   logEvent: (kind: HistoryKind, subject: object, detail?: object) => void
   listEvents: (limit?: number) => HistoryEvent[]
+  saveSnapshot: (s: Omit<Snapshot, 'id' | 'restorable'> & { blob: Buffer | null }) => number
+  listSnapshots: (limit?: number) => Snapshot[]
+  snapshotBlob: (id: number) => { path: string; blob: Buffer | null } | null
   close: () => void
 } {
   const db = new DatabaseSync(file)
@@ -65,9 +96,19 @@ export function openStore(file: string): {
     getMeta: db.prepare('SELECT value FROM meta WHERE key = ?'),
     setMeta: db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)'),
     upsertRoot: db.prepare(
-      'INSERT INTO roots (path, granted_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at'
+      'INSERT INTO roots (path, granted_at, label, workspace_id) VALUES (?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at, label = excluded.label, workspace_id = excluded.workspace_id'
     ),
-    lastRoot: db.prepare('SELECT path FROM roots ORDER BY granted_at DESC LIMIT 1'),
+    deleteRoot: db.prepare('DELETE FROM roots WHERE path = ? AND workspace_id = ?'),
+    listRoots: db.prepare(
+      'SELECT path, label FROM roots WHERE workspace_id = ? ORDER BY granted_at ASC'
+    ),
+    listWorkspaces: db.prepare(
+      'SELECT w.id, w.name, (SELECT COUNT(*) FROM roots r WHERE r.workspace_id = w.id) AS roots, (SELECT path FROM roots r WHERE r.workspace_id = w.id ORDER BY granted_at ASC LIMIT 1) AS path FROM workspaces w ORDER BY w.created_at ASC'
+    ),
+    insertWorkspace: db.prepare('INSERT INTO workspaces (name, created_at) VALUES (?, ?)'),
+    renameWorkspace: db.prepare('UPDATE workspaces SET name = ? WHERE id = ?'),
+    deleteWorkspace: db.prepare('DELETE FROM workspaces WHERE id = ?'),
+    deleteWorkspaceRoots: db.prepare('DELETE FROM roots WHERE workspace_id = ?'),
     touchRoot: db.prepare('UPDATE roots SET last_scan_at = ? WHERE path = ?'),
     insertReceipt: db.prepare(
       'INSERT INTO receipts (left_ref, right_ref, created_at, rows_json, counts_json) VALUES (?, ?, ?, ?, ?)'
@@ -77,18 +118,50 @@ export function openStore(file: string): {
     ),
     listEvents: db.prepare(
       'SELECT id, at, kind, subject_json, detail_json FROM events ORDER BY at DESC, id DESC LIMIT ?'
-    )
+    ),
+    insertSnapshot: db.prepare(
+      'INSERT INTO file_history (path, at, reason, mtime, size, keys_json, blob) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ),
+    listSnapshots: db.prepare(
+      'SELECT id, path, at, reason, mtime, size, keys_json, blob IS NOT NULL AS restorable FROM file_history ORDER BY at DESC, id DESC LIMIT ?'
+    ),
+    snapshotBlob: db.prepare('SELECT path, blob FROM file_history WHERE id = ?')
   }
+
+  const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
 
   return {
     getMeta: (key) => (q.getMeta.get(key)?.['value'] as string | undefined) ?? null,
     setMeta: (key, value) => void q.setMeta.run(key, value),
-    rememberRoot: (path) => void q.upsertRoot.run(path, Date.now()),
-    lastRoot: () => (q.lastRoot.get()?.['path'] as string | undefined) ?? null,
+    rememberRoot: (path, label) => void q.upsertRoot.run(path, Date.now(), label ?? null, active()),
+    forgetRoot: (path) => void q.deleteRoot.run(path, active()),
+    listRoots: () =>
+      (q.listRoots.all(active()) as { path: string; label: string | null }[]).map((r) => ({
+        ...r
+      })),
+    listWorkspaces: () =>
+      (
+        q.listWorkspaces.all() as { id: number; name: string; roots: number; path: string | null }[]
+      ).map((w) => ({ ...w })),
+    activeWorkspace: active,
+    setActiveWorkspace: (id) => void q.setMeta.run('active_workspace', String(id)),
+    createWorkspace: (name) => {
+      const id = Number(q.insertWorkspace.run(name, Date.now()).lastInsertRowid)
+      return { id, name, roots: 0, path: null }
+    },
+    renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
+    deleteWorkspace: (id) => {
+      q.deleteWorkspaceRoots.run(id)
+      q.deleteWorkspace.run(id)
+    },
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
-    forgetAll: () => db.exec('DELETE FROM roots; DELETE FROM receipts; DELETE FROM events;'),
-    clearCache: () => db.exec('DELETE FROM receipts; DELETE FROM events;'),
+    forgetAll: () =>
+      db.exec(
+        'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'
+      ),
+    clearCache: () =>
+      db.exec('DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'),
     saveReceipt: (r) =>
       Number(
         q.insertReceipt.run(
@@ -109,6 +182,33 @@ export function openStore(file: string): {
         subject: JSON.parse(row['subject_json'] as string),
         detail: JSON.parse(row['detail_json'] as string)
       })),
+    saveSnapshot: (s) =>
+      Number(
+        q.insertSnapshot.run(
+          s.path,
+          s.at,
+          s.reason,
+          s.mtime,
+          s.size,
+          JSON.stringify(s.keys),
+          s.blob
+        ).lastInsertRowid
+      ),
+    listSnapshots: (limit = 200) =>
+      (q.listSnapshots.all(limit) as Record<string, unknown>[]).map((r) => ({
+        id: Number(r['id']),
+        path: r['path'] as string,
+        at: Number(r['at']),
+        reason: r['reason'] as Snapshot['reason'],
+        mtime: Number(r['mtime']),
+        size: Number(r['size']),
+        keys: JSON.parse(r['keys_json'] as string),
+        restorable: Boolean(r['restorable'])
+      })),
+    snapshotBlob: (id) => {
+      const r = q.snapshotBlob.get(id) as { path: string; blob: Uint8Array | null } | undefined
+      return r ? { path: r.path, blob: r.blob ? Buffer.from(r.blob) : null } : null
+    },
     close: () => db.close()
   }
 }

@@ -16,11 +16,41 @@ import {
 } from '@shared/ipc'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log/main'
-import { grantRoot, revokeRoots, scanWorkspace } from './workspace'
+import { grantRoot, revokeRoot, revokeRoots, scanWorkspace } from './workspace'
+import { baseRef, checkRemoteRoot, parseRef, readText, sshConfigHosts, sshRef } from './fs'
+import type { RootInfo } from '@shared/channels'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
+import { osAuth } from './auth'
+import { revealAllValues, revealValue } from './env'
+import {
+  ApplyRequestSchema,
+  FormatRequestSchema,
+  RevealRequestSchema,
+  SetRequestSchema,
+  SshRootRequest,
+  RootPath,
+  WorkspaceId,
+  WorkspaceName,
+  WorkspaceRename,
+  SnapshotId,
+  ViewRequestSchema
+} from '@shared/ipc'
+import { applyPlan, formatFile, rollback, setValues } from './write'
+import { viewEnv } from '@shared/env-lint'
+import { envKind } from '@shared/env-file'
+import { assertGranted } from './workspace'
+
+const toRoot = (path: string, label: string | null): RootInfo => {
+  const r = parseRef(path)
+  return {
+    path,
+    kind: r.kind,
+    label: label ?? (r.kind === 'ssh' ? `${r.host}:${r.path}` : path)
+  }
+}
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -76,7 +106,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     if (!app.isPackaged)
       return { status: 'error', message: 'Updates only work in a packaged build.' }
     try {
-      autoUpdater.autoDownload = false
       const r = await autoUpdater.checkForUpdates()
       const v = r?.updateInfo.version
       return v && v !== app.getVersion()
@@ -115,14 +144,80 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     grantRoot(root)
     store.rememberRoot(root)
     store.logEvent('grant', { root })
-    return root
+    return toRoot(root, null)
+  })
+
+  ipcMain.handle(Channels.sshHosts, () => sshConfigHosts())
+
+  ipcMain.handle(Channels.workspaceAddSsh, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { host, path } = SshRootRequest.parse(raw)
+    await checkRemoteRoot(host, path)
+    const root = sshRef(host, path.replace(/\/+$/, '') || '/')
+    grantRoot(root)
+    store.rememberRoot(root)
+    store.logEvent('grant', { root })
+    return toRoot(root, null)
+  })
+
+  ipcMain.handle(Channels.workspaceRemove, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const path = RootPath.parse(raw)
+    revokeRoot(path)
+    store.forgetRoot(path)
+    store.logEvent('revoke', { root: path })
+  })
+
+  const grantActive = (): RootInfo[] => {
+    revokeRoots()
+    const roots = store.listRoots()
+    for (const r of roots) grantRoot(r.path)
+    return roots.map((r) => toRoot(r.path, r.label))
+  }
+  ipcMain.handle(Channels.wsList, () => {
+    assertUnlocked(store)
+    return { active: store.activeWorkspace(), all: store.listWorkspaces() }
+  })
+  ipcMain.handle(Channels.wsCreate, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const name = WorkspaceName.parse(raw)
+    if (store.listWorkspaces().some((w) => w.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`A workspace named ${name} already exists`)
+    const w = store.createWorkspace(name)
+    store.logEvent('workspace', { action: 'create', name })
+    return w
+  })
+  ipcMain.handle(Channels.wsRename, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { id, name } = WorkspaceRename.parse(raw)
+    if (
+      store.listWorkspaces().some((w) => w.id !== id && w.name.toLowerCase() === name.toLowerCase())
+    )
+      throw new Error(`A workspace named ${name} already exists`)
+    store.renameWorkspace(id, name)
+  })
+  ipcMain.handle(Channels.wsDelete, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = WorkspaceId.parse(raw)
+    const all = store.listWorkspaces()
+    if (all.length <= 1) throw new Error('Keep at least one workspace')
+    const name = all.find((w) => w.id === id)?.name
+    store.deleteWorkspace(id)
+    if (store.activeWorkspace() === id) store.setActiveWorkspace(all.find((w) => w.id !== id)!.id)
+    store.logEvent('workspace', { action: 'delete', name })
+    grantActive()
+  })
+  ipcMain.handle(Channels.wsSwitch, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = WorkspaceId.parse(raw)
+    if (!store.listWorkspaces().some((w) => w.id === id)) throw new Error('Unknown workspace')
+    store.setActiveWorkspace(id)
+    return grantActive()
   })
 
   ipcMain.handle(Channels.workspaceRecent, () => {
     assertUnlocked(store)
-    const root = store.lastRoot()
-    if (root) grantRoot(root)
-    return root
+    return grantActive()
   })
 
   ipcMain.handle(Channels.historyList, () => {
@@ -170,6 +265,81 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     )
     return receipt
   })
+
+  let authed: Awaited<ReturnType<typeof osAuth>> | null = null
+  ipcMain.handle(Channels.envReveal, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, key } = RevealRequestSchema.parse(raw)
+    // One OS prompt per app session: the first reveal authenticates, later ones reuse it.
+    // Every reveal is still logged by key name.
+    const method = authed ?? (authed = await osAuth('reveal environment values', getWindow()))
+    const value = await revealValue(path, key)
+    store.logEvent('reveal', { path, key }, { method })
+    return { value, method }
+  })
+
+  ipcMain.handle(Channels.envApply, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const req = ApplyRequestSchema.parse(raw)
+    const result = await applyPlan(store, req)
+    store.logEvent(
+      'apply',
+      { left: req.left, right: req.right, snapshot: result.snapshot },
+      { written: result.written, skipped: result.skipped }
+    )
+    return result
+  })
+  ipcMain.handle(Channels.envView, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path } = ViewRequestSchema.parse(raw)
+    assertGranted(path)
+    const text = await readText(path)
+    return viewEnv(text, { example: envKind(baseRef(path)) === 'example' })
+  })
+  ipcMain.handle(Channels.envFormat, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, expectedMtime } = FormatRequestSchema.parse(raw)
+    const r = await formatFile(store, path, expectedMtime)
+    if (r.changed) store.logEvent('format', { path, snapshot: r.snapshot }, { changed: r.changed })
+    return r
+  })
+  ipcMain.handle(Channels.envSet, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const req = SetRequestSchema.parse(raw)
+    const r = await setValues(store, req)
+    store.logEvent('edit', { path: req.path, snapshot: r.snapshot }, { written: r.written })
+    return r
+  })
+  ipcMain.handle(Channels.historySnapshots, () => {
+    assertUnlocked(store)
+    return store.listSnapshots()
+  })
+  ipcMain.handle(Channels.historyRollback, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = SnapshotId.parse(raw)
+    await rollback(store, id)
+    store.logEvent('rollback', { snapshot: id, path: store.snapshotBlob(id)?.path })
+  })
+
+  ipcMain.handle(Channels.envRevealAll, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path } = ViewRequestSchema.parse(raw)
+    const method = authed ?? (authed = await osAuth('reveal environment values', getWindow()))
+    const values = await revealAllValues(path)
+    store.logEvent('reveal', { path, key: '*' }, { method, keys: Object.keys(values).length })
+    return { values, method }
+  })
+
+  // Background update: check shortly after launch, download silently, tell the renderer.
+  ipcMain.handle(Channels.updateInstall, () => autoUpdater.quitAndInstall())
+  if (app.isPackaged) {
+    const send = (ev: unknown): void => getWindow()?.webContents.send(Channels.updateEvent, ev)
+    autoUpdater.autoDownload = true
+    autoUpdater.on('update-available', (i) => send({ kind: 'available', version: i.version }))
+    autoUpdater.on('update-downloaded', (i) => send({ kind: 'downloaded', version: i.version }))
+    autoUpdater.on('error', (e) => send({ kind: 'error', message: e.message }))
+    setTimeout(() => void autoUpdater.checkForUpdates().catch(() => {}), 10_000)
+  }
 
   ipcMain.handle(Channels.appInfo, (): AppInfo => ({
     version: app.getVersion(),

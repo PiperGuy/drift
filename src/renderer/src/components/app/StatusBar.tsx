@@ -6,10 +6,12 @@ import { useWorkspace } from '@/store/workspace'
  * and the guarantees this build actually enforces (no writes, no network).
  */
 export function StatusBar(): React.JSX.Element {
-  const root = useWorkspace((s) => s.root)
+  const roots = useWorkspace((s) => s.roots)
+  const root = roots.length === 1 ? roots[0].label : roots.length ? `${roots.length} roots` : null
   const scan = useWorkspace((s) => s.scan)
   const scanning = useWorkspace((s) => s.scanning)
   const license = useWorkspace((s) => s.license)
+  const written = useWorkspace((s) => s.written)
   return (
     <footer
       className="flex h-7 shrink-0 items-center gap-4 border-t bg-sidebar px-3 font-mono text-[11px] text-muted-foreground"
@@ -38,9 +40,9 @@ export function StatusBar(): React.JSX.Element {
       </span>
       <span
         className="inline-flex items-center gap-1"
-        title="This build has no network or write path"
+        title="Keys written this session after approval · nothing is ever sent"
       >
-        <WifiOff className="size-3" aria-hidden="true" /> 0 written · 0 sent
+        <WifiOff className="size-3" aria-hidden="true" /> {written} written · 0 sent
       </span>
     </footer>
   )

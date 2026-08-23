@@ -19,7 +19,7 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
   const file = join(dir, 'plumbr.db')
   try {
     let s = openStore(file)
-    assert.equal(s.lastRoot(), null)
+    assert.deepEqual(s.listRoots(), [])
     assert.equal(s.getMeta('fingerprint_key_ref'), null)
     s.setMeta('fingerprint_key_ref', 'sealed')
     s.rememberRoot('/ws')
@@ -30,7 +30,7 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
 
     // Reopen: migrations are idempotent, data is still there, newest first.
     s = openStore(file)
-    assert.equal(s.lastRoot(), '/ws')
+    assert.deepEqual(s.listRoots(), [{ path: '/ws', label: null }])
     assert.equal(s.getMeta('fingerprint_key_ref'), 'sealed')
     const events = s.listEvents()
     assert.deepEqual(
@@ -42,9 +42,49 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
     assert.ok(!JSON.stringify(events).includes('postgres'))
 
     s.forgetAll()
-    assert.equal(s.lastRoot(), null)
+    assert.deepEqual(s.listRoots(), [])
     assert.equal(s.listEvents().length, 0)
     assert.equal(s.getMeta('fingerprint_key_ref'), 'sealed')
+    s.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('workspaces: default exists, roots scoped to the active one, delete cascades', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plumbr-ws-'))
+  try {
+    const s = openStore(join(dir, 'plumbr.db'))
+    assert.deepEqual(
+      s.listWorkspaces().map((w) => w.name),
+      ['Default']
+    )
+    assert.equal(s.activeWorkspace(), 1)
+    s.rememberRoot('/a')
+    const w = s.createWorkspace('Client X')
+    s.setActiveWorkspace(w.id)
+    s.rememberRoot('ssh://vps/srv')
+    assert.deepEqual(
+      s.listRoots().map((r) => r.path),
+      ['ssh://vps/srv']
+    )
+    s.setActiveWorkspace(1)
+    assert.deepEqual(
+      s.listRoots().map((r) => r.path),
+      ['/a']
+    )
+    assert.deepEqual(
+      s.listWorkspaces().map((x) => [x.roots, x.path]),
+      [
+        [1, '/a'],
+        [1, 'ssh://vps/srv']
+      ]
+    )
+    s.deleteWorkspace(w.id)
+    assert.deepEqual(
+      s.listWorkspaces().map((x) => x.name),
+      ['Default']
+    )
     s.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

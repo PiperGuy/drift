@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log/main'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
+import { Channels } from '@shared/channels'
 
 log.initialize()
 log.errorHandler.startCatching()
@@ -19,6 +20,8 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Sit the traffic lights in their own strip above the sidebar header (see App.tsx mt-7).
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
     backgroundColor: '#08090a',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -31,6 +34,12 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('enter-full-screen', () =>
+    mainWindow?.webContents.send(Channels.windowFullscreen, true)
+  )
+  mainWindow.on('leave-full-screen', () =>
+    mainWindow?.webContents.send(Channels.windowFullscreen, false)
+  )
   mainWindow.on('closed', () => (mainWindow = null))
 
   // Any window.open / target=_blank goes to the system browser, never a new Electron window.
@@ -48,16 +57,32 @@ function createWindow(): void {
   }
 }
 
+// One instance: a second launch (Windows/Linux shortcut while parked in the tray) just
+// surfaces the running one, instead of a duplicate tray and a second writer on the store.
+if (!app.requestSingleInstanceLock()) app.quit()
+app.on('second-instance', () => {
+  if (mainWindow) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+})
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.theplumbr.drift')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc(() => mainWindow)
   createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  const show = (): BrowserWindow => {
+    if (!mainWindow) createWindow()
+    mainWindow!.show()
+    mainWindow!.focus()
+    return mainWindow!
+  }
+  // Dock click on macOS: the window may exist but be hidden in the tray.
+  app.on('activate', () => void show())
 })
 
+// No tray: closing the last window quits on Windows and Linux, as users expect.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

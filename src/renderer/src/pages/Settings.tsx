@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { LicenseForm } from '@/components/app/LicenseForm'
 import { McpClients } from '@/components/app/McpClients'
+import { HistoryPage } from '@/pages/History'
+import { AgentsPage } from '@/pages/Agents'
 import { useWorkspace, DEFAULT_IGNORE } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 
@@ -66,7 +68,6 @@ export function SettingsPage(): React.JSX.Element {
   const { theme, setTheme } = useTheme()
   const license = useWorkspace((s) => s.license)
   const reset = useWorkspace((s) => s.reset)
-  const setPage = useWorkspace((s) => s.setPage)
   const setOnboarded = useWorkspace((s) => s.setOnboarded)
   useEffect(() => {
     window.plumbr.appInfo().then(setInfo)
@@ -75,11 +76,11 @@ export function SettingsPage(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto">
-      <header className="glow flex h-14 shrink-0 items-center gap-3 border-b px-5">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Settings</h1>
           <p className="font-mono text-[11px] text-muted-foreground">
-            Everything stored is redacted: paths, key names, counts. Never a value.
+            What the app stores: paths, key names and counts. Not values.
           </p>
         </div>
       </header>
@@ -177,18 +178,25 @@ export function SettingsPage(): React.JSX.Element {
             <McpClients disabled={settings?.mcpEnabled === false} />
             <Hint>
               One click adds a <code className="font-mono">drift</code> entry to that client&apos;s
-              own MCP config; Claude Code also gets the Drift skill. Manual config is on the{' '}
-              <button
-                type="button"
-                className="text-lemon-ink underline-offset-2 hover:underline"
-                onClick={() => setPage('agents')}
-              >
-                Agents
-              </button>{' '}
-              page.
+              own MCP config; Claude Code also gets the Drift skill. Manual config is below.
             </Hint>
           </Row>
         </Section>
+        <div className="elev mt-3 h-[30rem] overflow-hidden rounded-lg border bg-card">
+          <AgentsPage />
+        </div>
+
+        <Section title="Audit log">
+          <Row label="On this machine">
+            <Hint>
+              Everything the app did, and a snapshot of every file before it was changed. Restore
+              from the Snapshots tab.
+            </Hint>
+          </Row>
+        </Section>
+        <div className="elev mt-3 h-[30rem] overflow-hidden rounded-lg border bg-card">
+          <HistoryPage />
+        </div>
 
         <Section title="Updates">
           <Row label="Version">
@@ -249,7 +257,7 @@ export function SettingsPage(): React.JSX.Element {
                   className="flex items-center justify-between rounded-md border border-dashed px-2.5 py-1.5 text-xs"
                 >
                   <span>{p}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">roadmap</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">coming soon</span>
                 </li>
               ))}
             </ul>

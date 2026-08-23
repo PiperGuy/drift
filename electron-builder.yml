@@ -25,7 +25,11 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDocumentsFolderUsageDescription: Drift reads .env files inside workspace folders you grant.
-  notarize: false
+  # Hardened runtime + notarization run automatically when APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID are set (release.yml).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:

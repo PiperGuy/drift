@@ -1,0 +1,1 @@
+Two offset horizontal strokes and a small closing dot turn environment drift into one compact, confident mark, while the softly dimensional rounded tile keeps it premium and legible at 32px. The core palette is lemon `#c8ff4d` on near-black `#08090a`, with tile base `#141a00`.

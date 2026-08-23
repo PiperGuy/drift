@@ -93,7 +93,7 @@ export function OnboardingPage(): React.JSX.Element {
   const [step, setStep] = useState(0)
   const [info, setInfo] = useState<AppInfo | null>(null)
   const {
-    root,
+    roots,
     scan,
     scanning,
     error,
@@ -180,23 +180,24 @@ export function OnboardingPage(): React.JSX.Element {
               <div className="mt-6" />
               <Eyebrow>Welcome to {PRODUCT}</Eyebrow>
               <Title>
-                Every <span className="text-lemon-ink">.env</span>, side by side. Never a value in
-                sight.
+                Your <span className="text-lemon-ink">.env</span> files, in one place. Values stay
+                hidden.
               </Title>
               <Lead>
-                {PRODUCT} finds the env files in a folder you choose, shows how local, staging and
-                production differ by key name, and writes nothing unless you approve an exact plan.
-                Two minutes and you have your first receipt.
+                {PRODUCT} looks through the folders and servers you pick, finds every env file and
+                shows you which keys differ between local, staging and production. It only writes to
+                a file when you tell it to. Setup takes a couple of minutes.
               </Lead>
               <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                <Card n={5} icon={ShieldCheck} title="Reads only what you grant">
-                  One folder. Nothing outside it is ever opened.
+                <Card n={5} icon={ShieldCheck} title="Only the folders you pick">
+                  Nothing outside them is opened.
                 </Card>
-                <Card n={6} icon={Lock} title="Values stay in the engine">
-                  The window, history and agents only ever see key names and classes.
+                <Card n={6} icon={Lock} title="Values are hidden by default">
+                  You see key names and whether they match. To see a value, you unlock it with Touch
+                  ID or your password.
                 </Card>
-                <Card n={7} icon={WifiOff} title="Nothing leaves this machine">
-                  No account, no server, no telemetry. The status bar keeps count.
+                <Card n={7} icon={WifiOff} title="Nothing is sent anywhere">
+                  No account, no server. Everything stays on this machine.
                 </Card>
               </div>
             </>
@@ -206,14 +207,13 @@ export function OnboardingPage(): React.JSX.Element {
             <>
               <Eyebrow>Step 1 · Access</Eyebrow>
               <Title>
-                Point it at a <span className="text-lemon-ink">folder</span>.
+                Pick a <span className="text-lemon-ink">folder</span> or a server.
               </Title>
               <Lead>
-                Pick the folder that holds your projects, or one project. {PRODUCT} walks it, skips{' '}
+                Choose the folder where your projects live, or a single project. {PRODUCT} skips{' '}
                 <code className="font-mono">node_modules</code>,{' '}
-                <code className="font-mono">.git</code> and build output, and groups every{' '}
-                <code className="font-mono">.env*</code> by Git repository. Files stay exactly where
-                they are.
+                <code className="font-mono">.git</code> and build folders, and groups the env files
+                it finds by repository. You can add a server over SSH later from the Workspace page.
               </Lead>
               {mac && (
                 <div
@@ -239,16 +239,19 @@ export function OnboardingPage(): React.JSX.Element {
               )}
               <div className="mt-6 flex flex-wrap items-center gap-4" style={i(5)}>
                 <Button size="lg" className="press cta-pulse" onClick={grant} disabled={scanning}>
-                  <FolderOpen /> {root ? 'Choose a different folder' : 'Choose a folder'}
+                  <FolderOpen /> {roots.length ? 'Add another folder' : 'Choose a folder'}
                 </Button>
-                {root && (
-                  <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                {roots.map((r) => (
+                  <span
+                    key={r.path}
+                    className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
+                  >
                     <Check className="size-3.5 text-ok" aria-hidden="true" />
-                    <span className="max-w-sm truncate" title={root}>
-                      {root}
+                    <span className="max-w-sm truncate" title={r.path}>
+                      {r.label}
                     </span>
                   </span>
-                )}
+                ))}
               </div>
               {scanning && <div className="scanline mt-4" aria-hidden="true" />}
               {error && !scanning && (
@@ -287,13 +290,13 @@ export function OnboardingPage(): React.JSX.Element {
               {pair && left && right ? (
                 <>
                   <Title>
-                    Your first <span className="text-lemon-ink">drift receipt</span>.
+                    Your first <span className="text-lemon-ink">comparison</span>.
                   </Title>
                   <Lead>
                     Comparing <code className="font-mono text-foreground">{left.rel}</code> to{' '}
-                    <code className="font-mono text-foreground">{right.rel}</code>. A receipt lists
-                    every key with a class. Values are compared as local fingerprints and never
-                    shown.
+                    <code className="font-mono text-foreground">{right.rel}</code>. Each key gets a
+                    label: same, changed, missing, extra or blank. Values are compared on this
+                    machine and not shown.
                   </Lead>
                   {comparing && <div className="scanline mt-4" aria-hidden="true" />}
                   {error && !comparing && (
@@ -366,14 +369,13 @@ export function OnboardingPage(): React.JSX.Element {
             <>
               <Eyebrow>Step 3 · Agents · optional</Eyebrow>
               <Title>
-                Give your coding agent the <span className="text-lemon-ink">shape</span>, not the
-                secrets.
+                Let your coding agent <span className="text-lemon-ink">see the keys</span>, not the
+                values.
               </Title>
               <Lead>
-                One click adds {PRODUCT}&apos;s MCP server to a client. Claude Code, Cursor and
-                friends can then ask which keys a deploy is missing. They get key names and classes;
-                there is no tool that returns a value or writes a file. Skip this if you do not use
-                an agent.
+                One click connects {PRODUCT} to Claude Code, Cursor or another MCP client. The agent
+                can then ask which keys a deploy is missing. It only ever gets key names; it cannot
+                read a value or write a file. Skip this if you don&apos;t use one.
               </Lead>
               <div className="mt-6" style={i(4)}>
                 <McpClients />
@@ -385,26 +387,28 @@ export function OnboardingPage(): React.JSX.Element {
             <>
               <Eyebrow>Step 4 · How it works</Eyebrow>
               <Title>
-                Three pages. <span className="text-lemon-ink">One</span> loop.
+                Where things <span className="text-lemon-ink">are</span>.
               </Title>
               <div className="mt-6 grid gap-3 sm:grid-cols-3">
                 <Card n={4} icon={FolderSearch} title={`Workspace · ${MOD}1`}>
-                  Projects on the left, environments per project, A and B pickers on each file.
+                  Your projects and their env files. Tick two files to compare them.
                 </Card>
                 <Card n={5} icon={Receipt} title={`Receipt · ${MOD}2`}>
-                  Classes per key, filters, search with {MOD}F, and the dry-run plan tab.
+                  The comparison. Filter by label, search with {MOD}F, then apply changes to B from
+                  the plan tab.
                 </Card>
                 <Card n={6} icon={History} title={`History · ${MOD}3`}>
-                  Every grant, scan and comparison, redacted, on this machine only.
+                  Everything the app did, and a snapshot of every file it changed. Restore from
+                  here.
                 </Card>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <Card n={7} icon={Bot} title={`Agents · ${MOD}4`}>
-                  Manage MCP clients and copy manual config.
+                  Connect coding agents, or copy the config to set one up by hand.
                 </Card>
                 <Card n={8} icon={Keyboard} title="Shortcuts">
-                  {MOD}B collapses the sidebar, {MOD}, opens Settings. Replay this tour from
-                  Settings any time.
+                  {MOD}B hides the sidebar, {MOD}, opens Settings. You can replay this tour from
+                  Settings.
                 </Card>
               </div>
             </>
