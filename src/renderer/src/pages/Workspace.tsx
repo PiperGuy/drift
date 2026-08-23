@@ -12,7 +12,7 @@ import type { EnvFileInfo } from '@shared/channels'
 import { ENV_KINDS, envKind, type EnvKind } from '@shared/env-file'
 import { Logo } from '@/components/app/Logo'
 import { Lattice } from '@/components/app/Lattice'
-import { KeysPanel } from '@/components/app/KeysPanel'
+import { EnvViewer } from '@/components/app/EnvViewer'
 import { fmtAgo, fmtSize } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -215,6 +215,7 @@ export function WorkspacePage(): React.JSX.Element {
   }, [scan])
 
   const [open, setOpen] = useState<EnvFileInfo | null>(null)
+  const openPath = open?.path ?? null
 
   if (!root) return <Onboarding grant={grant} />
 
@@ -328,155 +329,156 @@ export function WorkspacePage(): React.JSX.Element {
 
           <section className="flex min-h-0 min-w-0 flex-col" aria-label="Environment overview">
             <div className="flex min-h-0 min-w-0 flex-1">
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                {project && (
-                  <div className="border-b px-5 py-3.5">
-                    <h2 className="text-sm font-semibold tracking-tight">
-                      {project === UNGROUPED
-                        ? 'Files outside any Git project'
-                        : project === '.'
-                          ? root
-                          : project}
-                    </h2>
-                    <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Environments present">
-                      {CANON.map((k) => {
-                        const n = present.get(k) ?? 0
-                        return (
-                          <li
-                            key={k}
-                            className={cn(
-                              'inline-flex h-6 items-center gap-1.5 rounded-md border px-2 font-mono text-[11px]',
-                              n ? cn('elev', KIND_TONE[k]) : 'border-dashed text-muted-foreground'
-                            )}
-                          >
-                            <span aria-hidden="true">{n ? '●' : '○'}</span>
-                            {KIND_LABEL[k]}
-                            <span className="sr-only">{n ? `, ${n} present` : ', absent'}</span>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </div>
-                )}
-                <div className="min-h-0 flex-1 overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10 bg-background text-[11px] text-muted-foreground">
-                      <tr className="border-b [&>th]:h-9 [&>th]:px-3 [&>th]:text-left [&>th]:font-medium [&>th]:tracking-wide [&>th]:uppercase [&>th]:whitespace-nowrap [&>th:first-child]:pl-5">
-                        <th>Environment</th>
-                        <th className="w-2/5">File</th>
-                        <th className="text-right">Keys</th>
-                        <th className="hidden @4xl:table-cell">Modified</th>
-                        <th className="hidden text-right @4xl:table-cell">Size</th>
-                        <th className="w-24 text-right">Compare</th>
-                      </tr>
-                    </thead>
-                    <tbody className="stagger" key={project ?? ''}>
-                      {files.map((f, i) => {
-                        const isL = left?.path === f.path
-                        const isR = right?.path === f.path
-                        const s = summaries[f.path]
-                        const kind = envKind(f.name)
-                        return (
-                          <tr
-                            key={f.path}
-                            style={{ '--i': i } as CSSProperties}
-                            className={cn(
-                              'border-b transition-colors duration-(--duration-fast) [&>td]:h-11 [&>td]:px-3 [&>td]:whitespace-nowrap [&>td:first-child]:pl-5',
-                              isL || isR ? 'bg-lemon-soft/70' : 'hover:bg-accent/40'
-                            )}
-                          >
-                            <td>
-                              <span
-                                className={cn(
-                                  'rounded-md border px-1.5 py-0.5 font-mono text-[11px]',
-                                  KIND_TONE[kind]
-                                )}
-                              >
-                                {KIND_LABEL[kind]}
-                              </span>
-                            </td>
-                            <td className="max-w-0">
-                              <button
-                                type="button"
-                                onClick={() => setOpen(open?.path === f.path ? null : f)}
-                                aria-expanded={open?.path === f.path}
-                                aria-label={`Keys in ${f.rel}`}
-                                className={cn(
-                                  'block w-full truncate text-left font-mono text-xs underline-offset-2 hover:underline',
-                                  open?.path === f.path && 'text-lemon-ink'
-                                )}
-                                title={f.rel}
-                              >
-                                {f.name}
-                              </button>
-                              {f.rel !== f.name && (
-                                <div className="truncate font-mono text-[10px] text-muted-foreground">
-                                  {f.rel.slice(0, -f.name.length)}
-                                </div>
-                              )}
-                            </td>
-                            <td className="text-right font-mono text-xs">
-                              {s ? (
-                                <span title={`${s.keys} keys, ${s.blank} blank`}>
-                                  {s.keys}
-                                  {s.blank > 0 && (
-                                    <span className="text-muted-foreground">
-                                      {' '}
-                                      · {s.blank} blank
-                                    </span>
-                                  )}
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">…</span>
-                              )}
-                            </td>
-                            <td className="hidden text-xs text-muted-foreground @4xl:table-cell">
-                              <span title={new Date(f.modifiedAt).toLocaleString()}>
-                                {fmtAgo(f.modifiedAt)}
-                              </span>
-                            </td>
-                            <td className="hidden text-right font-mono text-xs text-muted-foreground @4xl:table-cell">
-                              {fmtSize(f.size)}
-                            </td>
-                            <td className="text-right">
-                              <div
-                                className="inline-flex gap-1"
-                                role="group"
-                                aria-label={`Compare ${f.rel}`}
-                              >
-                                <Button
-                                  size="xs"
-                                  variant={isL ? 'default' : 'outline'}
-                                  aria-pressed={isL}
-                                  aria-label={`Use ${f.rel} as A`}
-                                  onClick={() => pick('left', isL ? null : f)}
-                                >
-                                  A
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant={isR ? 'default' : 'outline'}
-                                  aria-pressed={isR}
-                                  aria-label={`Use ${f.rel} as B`}
-                                  onClick={() => pick('right', isR ? null : f)}
-                                >
-                                  B
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              {open && (
-                <KeysPanel
-                  file={open}
-                  summary={summaries[open.path]}
+              {open ? (
+                <EnvViewer
+                  key={open.path}
+                  file={files.find((f) => f.path === open.path) ?? open}
                   onClose={() => setOpen(null)}
                 />
+              ) : (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {project && (
+                    <div className="border-b px-5 py-3.5">
+                      <h2 className="text-sm font-semibold tracking-tight">
+                        {project === UNGROUPED
+                          ? 'Files outside any Git project'
+                          : project === '.'
+                            ? root
+                            : project}
+                      </h2>
+                      <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Environments present">
+                        {CANON.map((k) => {
+                          const n = present.get(k) ?? 0
+                          return (
+                            <li
+                              key={k}
+                              className={cn(
+                                'inline-flex h-6 items-center gap-1.5 rounded-md border px-2 font-mono text-[11px]',
+                                n ? cn('elev', KIND_TONE[k]) : 'border-dashed text-muted-foreground'
+                              )}
+                            >
+                              <span aria-hidden="true">{n ? '●' : '○'}</span>
+                              {KIND_LABEL[k]}
+                              <span className="sr-only">{n ? `, ${n} present` : ', absent'}</span>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10 bg-background text-[11px] text-muted-foreground">
+                        <tr className="border-b [&>th]:h-9 [&>th]:px-3 [&>th]:text-left [&>th]:font-medium [&>th]:tracking-wide [&>th]:uppercase [&>th]:whitespace-nowrap [&>th:first-child]:pl-5">
+                          <th>Environment</th>
+                          <th className="w-2/5">File</th>
+                          <th className="text-right">Keys</th>
+                          <th className="hidden @4xl:table-cell">Modified</th>
+                          <th className="hidden text-right @4xl:table-cell">Size</th>
+                          <th className="w-24 text-right">Compare</th>
+                        </tr>
+                      </thead>
+                      <tbody className="stagger" key={project ?? ''}>
+                        {files.map((f, i) => {
+                          const isL = left?.path === f.path
+                          const isR = right?.path === f.path
+                          const s = summaries[f.path]
+                          const kind = envKind(f.name)
+                          return (
+                            <tr
+                              key={f.path}
+                              style={{ '--i': i } as CSSProperties}
+                              className={cn(
+                                'border-b transition-colors duration-(--duration-fast) [&>td]:h-11 [&>td]:px-3 [&>td]:whitespace-nowrap [&>td:first-child]:pl-5',
+                                isL || isR ? 'bg-lemon-soft/70' : 'hover:bg-accent/40'
+                              )}
+                            >
+                              <td>
+                                <span
+                                  className={cn(
+                                    'rounded-md border px-1.5 py-0.5 font-mono text-[11px]',
+                                    KIND_TONE[kind]
+                                  )}
+                                >
+                                  {KIND_LABEL[kind]}
+                                </span>
+                              </td>
+                              <td className="max-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setOpen(openPath === f.path ? null : f)}
+                                  aria-expanded={openPath === f.path}
+                                  aria-label={`Keys in ${f.rel}`}
+                                  className={cn(
+                                    'block w-full truncate text-left font-mono text-xs underline-offset-2 hover:underline',
+                                    openPath === f.path && 'text-lemon-ink'
+                                  )}
+                                  title={f.rel}
+                                >
+                                  {f.name}
+                                </button>
+                                {f.rel !== f.name && (
+                                  <div className="truncate font-mono text-[10px] text-muted-foreground">
+                                    {f.rel.slice(0, -f.name.length)}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="text-right font-mono text-xs">
+                                {s ? (
+                                  <span title={`${s.keys} keys, ${s.blank} blank`}>
+                                    {s.keys}
+                                    {s.blank > 0 && (
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        · {s.blank} blank
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">…</span>
+                                )}
+                              </td>
+                              <td className="hidden text-xs text-muted-foreground @4xl:table-cell">
+                                <span title={new Date(f.modifiedAt).toLocaleString()}>
+                                  {fmtAgo(f.modifiedAt)}
+                                </span>
+                              </td>
+                              <td className="hidden text-right font-mono text-xs text-muted-foreground @4xl:table-cell">
+                                {fmtSize(f.size)}
+                              </td>
+                              <td className="text-right">
+                                <div
+                                  className="inline-flex gap-1"
+                                  role="group"
+                                  aria-label={`Compare ${f.rel}`}
+                                >
+                                  <Button
+                                    size="xs"
+                                    variant={isL ? 'default' : 'outline'}
+                                    aria-pressed={isL}
+                                    aria-label={`Use ${f.rel} as A`}
+                                    onClick={() => pick('left', isL ? null : f)}
+                                  >
+                                    A
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    variant={isR ? 'default' : 'outline'}
+                                    aria-pressed={isR}
+                                    aria-label={`Use ${f.rel} as B`}
+                                    onClick={() => pick('right', isR ? null : f)}
+                                  >
+                                    B
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
           </section>

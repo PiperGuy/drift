@@ -18,6 +18,8 @@ export const ApplyRequestSchema = z.object({
   keys: z.array(z.string().min(1)).min(1).max(5000),
   expectedMtime: z.number()
 })
+export const ViewRequestSchema = z.object({ path: z.string().min(1) })
+export const FormatRequestSchema = z.object({ path: z.string().min(1), expectedMtime: z.number() })
 export const SnapshotId = z.number().int().positive()
 export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([

@@ -156,6 +156,18 @@ base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarizat
 via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
 
+## Viewing a file
+
+Workspace → click a file name. **UI** shows a card per key: a kind guessed from the name
+(secret / url / number / flag / config), line, length, quoting, `export`, whether a later
+assignment shadows it, and any lint findings. **File** shows the source with line numbers,
+colouring and a lint gutter. Values are masks of the same length; the eye reveals one key
+behind OS auth for 20 s. **Format** rewrites spelling only (`KEY=value`, quotes where needed,
+whitespace, LF, final newline) via the snapshot + atomic path; meaning, order and comments are
+untouched. Lint rules: duplicate-key, invalid-line, unquoted-space, unquoted-hash,
+surrounding-space, key-case, trailing-whitespace, empty-value, no-final-newline, crlf,
+mixed-export, secret-in-example.
+
 ## Writing files
 
 The only write path is Receipt → Dry-run plan → **Apply to B…**. The dialog lists the exact keys

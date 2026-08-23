@@ -6,6 +6,7 @@
  */
 import type { DriftReceipt, KeyEntry } from './drift'
 import type { LicenseState } from './license'
+import type { EnvView } from './env-lint'
 
 export const Channels = {
   workspacePick: 'workspace:pick',
@@ -31,7 +32,9 @@ export const Channels = {
   trayCompare: 'tray:compare',
   envApply: 'env:apply',
   historySnapshots: 'history:snapshots',
-  historyRollback: 'history:rollback'
+  historyRollback: 'history:rollback',
+  envView: 'env:view',
+  envFormat: 'env:format'
 } as const
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
@@ -69,6 +72,7 @@ export type HistoryKind =
   | 'reveal'
   | 'apply'
   | 'rollback'
+  | 'format'
 export type HistoryEvent = {
   id: number
   at: number
@@ -125,13 +129,17 @@ export type Snapshot = {
   id: number
   path: string
   at: number
-  reason: 'apply' | 'rollback'
+  reason: 'apply' | 'rollback' | 'format'
   mtime: number
   size: number
   keys: string[]
   /** False when no keyring could seal the bytes: shape recorded, content not restorable. */
   restorable: boolean
 }
+
+export type ViewRequest = { path: string }
+export type FormatRequest = { path: string; expectedMtime: number }
+export type FormatResult = { changed: number; snapshot: number | null }
 
 export type RevealRequest = { path: string; key: string }
 export type RevealResult = { value: string | null; method: 'touchid' | 'polkit' | 'dialog' }
@@ -184,4 +192,8 @@ export type PlumbrApi = {
   listSnapshots: () => Promise<Snapshot[]>
   /** Restore a snapshot over its file (snapshotting the current content first). */
   rollback: (id: number) => Promise<void>
+  /** Redacted, typed rendering of a file with lint findings. */
+  viewEnv: (req: ViewRequest) => Promise<EnvView>
+  /** Rewrite in canonical form via the snapshot + atomic path. */
+  formatEnv: (req: FormatRequest) => Promise<FormatResult>
 }

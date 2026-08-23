@@ -3,7 +3,8 @@ import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { safeStorage } from 'electron'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
-import type { ApplyRequest, ApplyResult } from '@shared/channels'
+import { formatEnv } from '@shared/env-lint'
+import type { ApplyRequest, ApplyResult, FormatResult, Snapshot } from '@shared/channels'
 import { assertGranted } from './workspace'
 import type { Store } from './store'
 
@@ -25,7 +26,7 @@ function unseal(blob: Buffer): Buffer {
   return Buffer.from(safeStorage.decryptString(blob), 'base64')
 }
 
-async function snapshot(store: Store, path: string, reason: 'apply' | 'rollback'): Promise<number> {
+async function snapshot(store: Store, path: string, reason: Snapshot['reason']): Promise<number> {
   const [bytes, st] = await Promise.all([readFile(path), stat(path)])
   return store.saveSnapshot({
     path,
@@ -83,6 +84,31 @@ export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyR
   }
   await atomicWrite(req.right, patchEnv(rightText, assignments))
   return { written: assignments.map((a) => a.key), skipped, snapshot: snap }
+}
+
+/** Rewrite a file in canonical form. Same guards and snapshot as apply. */
+export async function formatFile(
+  store: Store,
+  path: string,
+  expectedMtime: number
+): Promise<FormatResult> {
+  assertGranted(path)
+  const st = await stat(path)
+  if (Math.abs(st.mtimeMs - expectedMtime) > 1)
+    throw new Error(`${path} changed since it was opened. Rescan, then format.`)
+  const before = await readFile(path, 'utf8')
+  const after = formatEnv(before)
+  if (after === before) return { changed: 0, snapshot: null }
+  const a = before.split(/\r?\n/)
+  const b = after.split('\n')
+  let changed = 0
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) changed++
+  const snap = await snapshot(store, path, 'format')
+  const st2 = await stat(path)
+  if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size)
+    throw new Error(`${path} changed while preparing the write. Rescan, then format.`)
+  await atomicWrite(path, after)
+  return { changed, snapshot: snap }
 }
 
 export async function rollback(store: Store, id: number): Promise<void> {

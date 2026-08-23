@@ -7,6 +7,7 @@ import {
   Eraser,
   Eye,
   PenLine,
+  Sparkles,
   Undo2,
   FolderOpen,
   GitCompareArrows,
@@ -31,7 +32,8 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' },
   reveal: { icon: Eye, label: 'Revealed', tone: 'text-bad bg-bad-soft' },
   apply: { icon: PenLine, label: 'Wrote', tone: 'text-lemon-ink bg-lemon-soft' },
-  rollback: { icon: Undo2, label: 'Rolled back', tone: 'text-warn bg-warn-soft' }
+  rollback: { icon: Undo2, label: 'Rolled back', tone: 'text-warn bg-warn-soft' },
+  format: { icon: Sparkles, label: 'Formatted', tone: 'text-lemon-ink bg-lemon-soft' }
 }
 
 const base = (p: unknown): string =>
@@ -69,6 +71,8 @@ function describe(e: HistoryEvent): string {
     }
     case 'rollback':
       return `${base(e.subject['path'])} restored from snapshot #${e.subject['snapshot']}`
+    case 'format':
+      return `${base(e.subject['path'])} · ${e.detail['changed']} lines tidied`
   }
 }
 

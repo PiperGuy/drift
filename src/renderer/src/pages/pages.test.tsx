@@ -94,6 +94,8 @@ const plumbr: PlumbrApi = {
   applyPlan: vi.fn(async () => ({ written: [], skipped: [], snapshot: 1 })),
   listSnapshots: vi.fn(async () => []),
   rollback: vi.fn(async () => {}),
+  viewEnv: vi.fn(async () => ({ lines: [], lint: [], formatted: true })),
+  formatEnv: vi.fn(async () => ({ changed: 0, snapshot: null })),
   onUpdate: vi.fn(() => () => {}),
   installUpdate: vi.fn(async () => {}),
   onTrayCompare: vi.fn(() => () => {}),

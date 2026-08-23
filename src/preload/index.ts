@@ -30,6 +30,8 @@ const plumbr: PlumbrApi = {
   applyPlan: (req) => ipcRenderer.invoke(Channels.envApply, req),
   listSnapshots: () => ipcRenderer.invoke(Channels.historySnapshots),
   rollback: (id) => ipcRenderer.invoke(Channels.historyRollback, id),
+  viewEnv: (req) => ipcRenderer.invoke(Channels.envView, req),
+  formatEnv: (req) => ipcRenderer.invoke(Channels.envFormat, req),
   onTrayCompare: (cb) => {
     ipcRenderer.on(Channels.trayCompare, cb)
     return () => ipcRenderer.removeListener(Channels.trayCompare, cb)

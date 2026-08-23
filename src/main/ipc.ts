@@ -24,8 +24,19 @@ import { install, statusAll, uninstall } from './mcp-clients'
 import { osAuth } from './auth'
 import { trayReceipt } from './tray'
 import { revealValue } from './env'
-import { ApplyRequestSchema, RevealRequestSchema, SnapshotId } from '@shared/ipc'
-import { applyPlan, rollback } from './write'
+import {
+  ApplyRequestSchema,
+  FormatRequestSchema,
+  RevealRequestSchema,
+  SnapshotId,
+  ViewRequestSchema
+} from '@shared/ipc'
+import { applyPlan, formatFile, rollback } from './write'
+import { viewEnv } from '@shared/env-lint'
+import { envKind } from '@shared/env-file'
+import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+import { assertGranted } from './workspace'
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -195,6 +206,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       { written: result.written, skipped: result.skipped }
     )
     return result
+  })
+  ipcMain.handle(Channels.envView, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path } = ViewRequestSchema.parse(raw)
+    assertGranted(path)
+    const text = await readFile(path, 'utf8')
+    return viewEnv(text, { example: envKind(basename(path)) === 'example' })
+  })
+  ipcMain.handle(Channels.envFormat, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, expectedMtime } = FormatRequestSchema.parse(raw)
+    const r = await formatFile(store, path, expectedMtime)
+    if (r.changed) store.logEvent('format', { path, snapshot: r.snapshot }, { changed: r.changed })
+    return r
   })
   ipcMain.handle(Channels.historySnapshots, () => {
     assertUnlocked(store)
