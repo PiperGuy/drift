@@ -247,7 +247,7 @@ export default function App(): React.JSX.Element {
             collapsed ? 'flex-col gap-1' : 'justify-between px-2 pl-3'
           )}
         >
-          {!collapsed && <span className="whitespace-nowrap">Local-first · redacted</span>}
+          {!collapsed && <span className="whitespace-nowrap">On your machine</span>}
           <ThemeToggle />
           <button
             type="button"

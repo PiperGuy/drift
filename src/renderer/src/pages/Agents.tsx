@@ -70,16 +70,15 @@ export function AgentsPage(): React.JSX.Element {
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Agents</h1>
           <p className="font-mono text-[11px] text-muted-foreground">
-            MCP server · stdio · read-only · values never returned
+            Connect coding agents. They get key names, not values.
           </p>
         </div>
       </header>
       <div className="mx-auto max-w-2xl space-y-6 p-6">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Give Claude Code, Cursor or any MCP client the shape of your environments: key names,
-          drift classes and dry-run plans for the workspace you granted here. The server runs
-          locally from inside {PRODUCT}, reads nothing outside that folder, and has no tool that
-          writes or syncs.
+          Connect Claude Code, Cursor or any other MCP client to {PRODUCT}. The agent can list your
+          env files, see which keys differ between environments and get a plan. It never gets a
+          value, and it can&apos;t change a file. The server runs on this machine, inside the app.
         </p>
 
         <section className="space-y-3">

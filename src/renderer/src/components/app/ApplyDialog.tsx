@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { PRODUCT } from '@shared/product'
 
 const OP: Record<SyncAction['op'], { glyph: string; tone: string; on: boolean }> = {
   add: { glyph: '+', tone: 'text-ok', on: true },
@@ -138,9 +139,9 @@ export function ApplyDialog({
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-lemon-ink" aria-hidden="true" />
           <span>
-            Each chosen key&apos;s assignment is copied from {left.name} as written there. The file
-            is snapshotted first, written atomically, and refused if it changed since this plan.
-            Keys only in {right.name} are never removed. Comments and order stay as they are.
+            The ticked keys are copied from {left.name} exactly as written there. {PRODUCT} takes a
+            snapshot of {right.name} first and won&apos;t write if the file changed in the meantime.
+            Keys that only exist in {right.name} are left alone, and so are comments and ordering.
           </span>
         </p>
         {error && (

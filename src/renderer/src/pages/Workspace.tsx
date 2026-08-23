@@ -54,18 +54,18 @@ const CANON: EnvKind[] = ['base', 'local', 'staging', 'preview', 'production']
 const FACTS: { k: string; t: string; d: string }[] = [
   {
     k: '01',
-    t: 'Scan reads',
-    d: 'File names, paths, sizes and modified times. Contents are never opened.'
+    t: 'What it reads',
+    d: 'File names and dates first. Key names when you open a project. Values stay in the background and are only shown when you unlock one.'
   },
   {
     k: '02',
-    t: 'Inspect reads',
-    d: 'Key names and a per-launch fingerprint of each value, in the main process. This window never receives a value.'
+    t: 'What it writes',
+    d: 'Nothing, until you approve a change. Every write takes a snapshot first, so you can always go back.'
   },
   {
     k: '03',
-    t: 'This build',
-    d: 'Compares two local files and describes a plan. It writes nothing and sends nothing.'
+    t: 'Where it goes',
+    d: 'Nowhere. No account, no server. The status bar at the bottom shows what was written and sent.'
   }
 ]
 
@@ -83,17 +83,17 @@ function Onboarding({ add }: { add: () => void }): React.JSX.Element {
           className="mt-6 font-mono text-[11px] tracking-[0.2em] text-lemon-ink uppercase"
           style={{ '--i': 3 } as CSSProperties}
         >
-          Local-first · redacted by default
+          Runs on your machine · values hidden
         </p>
         <h1 className="hero-title mt-2" style={{ '--i': 4 } as CSSProperties}>
-          Point <span className="text-lemon-ink">{PRODUCT}</span> at a folder.
+          Add a folder or a server to <span className="text-lemon-ink">{PRODUCT}</span>.
         </h1>
         <p
           className="mt-3 max-w-lg text-[15px] leading-relaxed text-muted-foreground"
           style={{ '--i': 5 } as CSSProperties}
         >
-          It lists every <code className="font-mono text-foreground">.env*</code> inside, grouped by
-          Git project, and leaves each file exactly where it is.
+          It finds every <code className="font-mono text-foreground">.env</code> file inside, groups
+          them by project, and leaves them where they are.
         </p>
         <dl
           className="stagger mt-8 grid gap-3 sm:grid-cols-3"
@@ -118,8 +118,8 @@ function Onboarding({ add }: { add: () => void }): React.JSX.Element {
             <Plug /> Select a source
           </Button>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only what you
-            grant is readable
+            <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only what you add
+            can be read
           </span>
         </div>
       </div>
