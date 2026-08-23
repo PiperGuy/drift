@@ -21,6 +21,7 @@ import { SettingsPage } from '@/pages/Settings'
 import { HistoryPage } from '@/pages/History'
 import { AgentsPage } from '@/pages/Agents'
 import { Lock } from '@/components/app/Lock'
+import { WorkspaceSwitcher } from '@/components/app/WorkspaceSwitcher'
 import { toast } from 'sonner'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { useWorkspace, type PageId } from '@/store/workspace'
@@ -226,6 +227,7 @@ export default function App(): React.JSX.Element {
               style={{ translate: `0 ${ind.y}px`, height: ind.h }}
             />
           )}
+          <WorkspaceSwitcher collapsed={collapsed} />
           <div className="space-y-0.5">
             <p className={cn('nav-h', collapsed && 'sr-only')}>On this machine</p>
             {LOCAL.map(item)}

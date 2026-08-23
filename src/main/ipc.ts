@@ -33,6 +33,9 @@ import {
   SetRequestSchema,
   SshRootRequest,
   RootPath,
+  WorkspaceId,
+  WorkspaceName,
+  WorkspaceRename,
   SnapshotId,
   ViewRequestSchema
 } from '@shared/ipc'
@@ -164,11 +167,52 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     store.logEvent('revoke', { root: path })
   })
 
-  ipcMain.handle(Channels.workspaceRecent, () => {
-    assertUnlocked(store)
+  const grantActive = (): RootInfo[] => {
+    revokeRoots()
     const roots = store.listRoots()
     for (const r of roots) grantRoot(r.path)
     return roots.map((r) => toRoot(r.path, r.label))
+  }
+  ipcMain.handle(Channels.wsList, () => {
+    assertUnlocked(store)
+    return { active: store.activeWorkspace(), all: store.listWorkspaces() }
+  })
+  ipcMain.handle(Channels.wsCreate, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const name = WorkspaceName.parse(raw)
+    if (store.listWorkspaces().some((w) => w.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`A workspace named ${name} already exists`)
+    const w = store.createWorkspace(name)
+    store.logEvent('workspace', { action: 'create', name })
+    return w
+  })
+  ipcMain.handle(Channels.wsRename, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { id, name } = WorkspaceRename.parse(raw)
+    store.renameWorkspace(id, name)
+  })
+  ipcMain.handle(Channels.wsDelete, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = WorkspaceId.parse(raw)
+    const all = store.listWorkspaces()
+    if (all.length <= 1) throw new Error('Keep at least one workspace')
+    const name = all.find((w) => w.id === id)?.name
+    store.deleteWorkspace(id)
+    if (store.activeWorkspace() === id) store.setActiveWorkspace(all.find((w) => w.id !== id)!.id)
+    store.logEvent('workspace', { action: 'delete', name })
+    grantActive()
+  })
+  ipcMain.handle(Channels.wsSwitch, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const id = WorkspaceId.parse(raw)
+    if (!store.listWorkspaces().some((w) => w.id === id)) throw new Error('Unknown workspace')
+    store.setActiveWorkspace(id)
+    return grantActive()
+  })
+
+  ipcMain.handle(Channels.workspaceRecent, () => {
+    assertUnlocked(store)
+    return grantActive()
   })
 
   ipcMain.handle(Channels.historyList, () => {

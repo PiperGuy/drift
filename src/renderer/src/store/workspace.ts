@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DriftReceipt } from '@shared/drift'
-import type { EnvFileInfo, RootInfo, ScanResult } from '@shared/channels'
+import type { EnvFileInfo, RootInfo, ScanResult, Workspace } from '@shared/channels'
 import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
@@ -55,6 +55,14 @@ type State = {
   /** Keys written this session, for the status bar. */
   written: number
   noteWritten: (n: number) => void
+  /** Named workspaces; `workspace` is the active id. */
+  workspaces: Workspace[]
+  workspace: number
+  loadWorkspaces: () => Promise<void>
+  switchWorkspace: (id: number) => Promise<void>
+  createWorkspace: (name: string, activate?: boolean) => Promise<void>
+  renameWorkspace: (id: number, name: string) => Promise<void>
+  deleteWorkspace: (id: number) => Promise<void>
   /** Granted roots: local folders and ssh://host/path. */
   roots: RootInfo[]
   /** Files from every root, merged. `scan.root` is '' when several roots are granted. */
@@ -111,6 +119,45 @@ export const useWorkspace = create<State>((set, get) => ({
       }
       return { sidebarCollapsed: next }
     }),
+  workspaces: [],
+  workspace: 1,
+  loadWorkspaces: async () => {
+    const { active, all } = await window.plumbr.listWorkspaces()
+    set({ workspaces: all, workspace: active })
+  },
+  switchWorkspace: async (id) => {
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    const roots = await window.plumbr.switchWorkspace(id)
+    set({
+      workspace: id,
+      roots,
+      scan: null,
+      project: null,
+      summaries: {},
+      left: null,
+      right: null,
+      receipt: null,
+      error: null,
+      viewerDirty: false,
+      page: 'workspace'
+    })
+    await get().loadWorkspaces()
+    if (roots.length) await get().rescan()
+  },
+  createWorkspace: async (name, activate = true) => {
+    const w = await window.plumbr.createWorkspace(name)
+    await get().loadWorkspaces()
+    if (activate) await get().switchWorkspace(w.id)
+  },
+  renameWorkspace: async (id, name) => {
+    await window.plumbr.renameWorkspace({ id, name })
+    await get().loadWorkspaces()
+  },
+  deleteWorkspace: async (id) => {
+    await window.plumbr.deleteWorkspace(id)
+    await get().loadWorkspaces()
+    if (get().workspace === id) await get().switchWorkspace(get().workspaces[0].id)
+  },
   roots: [],
   scan: null,
   scanning: false,
@@ -139,6 +186,7 @@ export const useWorkspace = create<State>((set, get) => ({
     set({ license })
     if (license.state === 'expired') return
     set({ onboarded: (await window.plumbr.getSettings()).onboarded })
+    await get().loadWorkspaces()
     const roots = await window.plumbr.recentWorkspaces()
     if (roots.length === 0) return
     set({ roots })
@@ -166,6 +214,7 @@ export const useWorkspace = create<State>((set, get) => ({
     set((s) => ({
       roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
     }))
+    void get().loadWorkspaces()
     await get().rescan()
   },
 
@@ -174,6 +223,7 @@ export const useWorkspace = create<State>((set, get) => ({
     set((s) => ({
       roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
     }))
+    void get().loadWorkspaces()
     await get().rescan()
   },
 
@@ -193,6 +243,7 @@ export const useWorkspace = create<State>((set, get) => ({
         project: s.project && splitProjectKey(s.project).root === path ? null : s.project
       }
     })
+    void get().loadWorkspaces()
     if (get().roots.length === 0) set({ scan: null, project: null, summaries: {} })
     else await get().rescan()
   },

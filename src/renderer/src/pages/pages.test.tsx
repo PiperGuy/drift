@@ -75,6 +75,11 @@ const plumbr: PlumbrApi = {
     label: `${host}:${path}`
   })),
   removeRoot: vi.fn(async () => {}),
+  listWorkspaces: vi.fn(async () => ({ active: 1, all: [{ id: 1, name: 'Default', roots: 1 }] })),
+  createWorkspace: vi.fn(async (name) => ({ id: 2, name, roots: 0 })),
+  renameWorkspace: vi.fn(async () => {}),
+  deleteWorkspace: vi.fn(async () => {}),
+  switchWorkspace: vi.fn(async () => []),
   listHistory: vi.fn(async () => []),
   forgetData: vi.fn(async () => {}),
   clearCache: vi.fn(async () => {}),

@@ -68,7 +68,7 @@ const FACTS: { k: string; t: string; d: string }[] = [
   }
 ]
 
-function Onboarding({ grant }: { grant: () => void }): React.JSX.Element {
+function Onboarding({ grant, ssh }: { grant: () => void; ssh: () => void }): React.JSX.Element {
   return (
     <div className="relative flex h-full items-center justify-center overflow-auto p-8">
       <Lattice className="absolute inset-0 size-full [mask-image:radial-gradient(ellipse_at_center,transparent_22%,black_80%)]" />
@@ -116,9 +116,12 @@ function Onboarding({ grant }: { grant: () => void }): React.JSX.Element {
           <Button onClick={grant} autoFocus size="lg" className="press cta-pulse">
             <FolderOpen /> Choose a folder
           </Button>
+          <Button onClick={ssh} variant="outline" size="lg" className="press">
+            <Server /> Add a server over SSH
+          </Button>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only this folder
-            is readable afterwards
+            <ShieldCheck className="size-3.5 text-lemon-ink" aria-hidden="true" /> Only what you
+            grant is readable
           </span>
         </div>
       </div>
@@ -256,7 +259,13 @@ export function WorkspacePage(): React.JSX.Element {
     ? groups.filter((g) => g.name.toLowerCase().includes(q) || g.fs.some(fileMatches))
     : groups
 
-  if (roots.length === 0) return <Onboarding grant={grant} />
+  if (roots.length === 0)
+    return (
+      <>
+        <Onboarding grant={grant} ssh={() => setSshOpen(true)} />
+        {sshOpen && <AddSshDialog onClose={() => setSshOpen(false)} />}
+      </>
+    )
 
   const allFiles = groups.find((g) => g.key === project)?.fs ?? []
   // A query that matched the project name keeps every file; otherwise narrow to matching files.

@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string }> = {
   grant: { icon: FolderOpen, label: 'Granted', tone: 'text-lemon-ink bg-lemon-soft' },
   revoke: { icon: FolderOpen, label: 'Removed', tone: 'text-muted-foreground bg-muted' },
+  workspace: { icon: FolderOpen, label: 'Workspace', tone: 'text-muted-foreground bg-muted' },
   scan: { icon: ScanSearch, label: 'Scanned', tone: 'text-foreground bg-muted' },
   compare: { icon: GitCompareArrows, label: 'Compared', tone: 'text-warn bg-warn-soft' },
   forget: { icon: Trash2, label: 'Forgot', tone: 'text-bad bg-bad-soft' },
@@ -46,6 +47,8 @@ function describe(e: HistoryEvent): string {
     case 'grant':
     case 'revoke':
       return String(e.subject['root'] ?? '')
+    case 'workspace':
+      return `${e.subject['action']} ${e.subject['name'] ?? ''}`
     case 'scan':
       return `${e.detail['files'] ?? 0} files in ${e.detail['projects'] ?? 0} projects · ${base(e.subject['root'])}`
     case 'compare': {

@@ -156,6 +156,13 @@ base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarizat
 via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
 
+## Workspaces
+
+The switcher at the top of the sidebar holds named workspaces, each its own set of roots
+(folders and servers). Switching swaps the granted roots, the scan and the current comparison;
+nothing on disk changes. New / Rename / Delete live in the same menu; the last one cannot be
+deleted. Everything else (history, snapshots, settings, licence) is shared.
+
 ## Roots: several folders, and servers over SSH
 
 Workspace → **Add folder** grants another local folder; **Add SSH** grants `ssh://host/path`.

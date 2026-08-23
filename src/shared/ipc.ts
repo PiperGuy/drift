@@ -10,6 +10,9 @@ export const SshRootRequest = z.object({
   host: z.string().regex(/^[A-Za-z0-9._@-]+$/),
   path: z.string().regex(/^\//)
 })
+export const WorkspaceName = z.string().trim().min(1).max(60)
+export const WorkspaceId = z.number().int().positive()
+export const WorkspaceRename = z.object({ id: WorkspaceId, name: WorkspaceName })
 export const RootPath = z.string().min(1)
 export const ScanRequest = z.object({ root: z.string().min(1) })
 export const SettingsPatch = z.object({

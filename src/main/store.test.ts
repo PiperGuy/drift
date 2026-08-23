@@ -50,3 +50,40 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('workspaces: default exists, roots scoped to the active one, delete cascades', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plumbr-ws-'))
+  try {
+    const s = openStore(join(dir, 'plumbr.db'))
+    assert.deepEqual(
+      s.listWorkspaces().map((w) => w.name),
+      ['Default']
+    )
+    assert.equal(s.activeWorkspace(), 1)
+    s.rememberRoot('/a')
+    const w = s.createWorkspace('Client X')
+    s.setActiveWorkspace(w.id)
+    s.rememberRoot('ssh://vps/srv')
+    assert.deepEqual(
+      s.listRoots().map((r) => r.path),
+      ['ssh://vps/srv']
+    )
+    s.setActiveWorkspace(1)
+    assert.deepEqual(
+      s.listRoots().map((r) => r.path),
+      ['/a']
+    )
+    assert.deepEqual(
+      s.listWorkspaces().map((x) => x.roots),
+      [1, 1]
+    )
+    s.deleteWorkspace(w.id)
+    assert.deepEqual(
+      s.listWorkspaces().map((x) => x.name),
+      ['Default']
+    )
+    s.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

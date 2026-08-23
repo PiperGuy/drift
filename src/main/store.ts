@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import type { DriftReceipt } from '@shared/drift'
-import type { HistoryEvent, HistoryKind, Snapshot } from '@shared/channels'
+import type { HistoryEvent, HistoryKind, Snapshot, Workspace } from '@shared/channels'
 
 /**
  * Local store: one SQLite file in userData, opened with `node:sqlite` (built into
@@ -48,7 +48,12 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX file_history_path ON file_history (path, at DESC);`,
   // v3: a root may be a local folder or ssh://host/path; label shown in the sidebar.
-  `ALTER TABLE roots ADD COLUMN label TEXT;`
+  `ALTER TABLE roots ADD COLUMN label TEXT;`,
+  // v4: named workspaces, each a set of roots. Existing roots join "Default".
+  `CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+   INSERT INTO workspaces (name, created_at) VALUES ('Default', strftime('%s','now') * 1000);
+   ALTER TABLE roots ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
+   INSERT OR IGNORE INTO meta (key, value) VALUES ('active_workspace', '1');`
 ]
 
 export type Store = ReturnType<typeof openStore>
@@ -58,7 +63,14 @@ export function openStore(file: string): {
   setMeta: (key: string, value: string) => void
   rememberRoot: (path: string, label?: string) => void
   forgetRoot: (path: string) => void
+  /** Roots of the active workspace. */
   listRoots: () => { path: string; label: string | null }[]
+  listWorkspaces: () => Workspace[]
+  activeWorkspace: () => number
+  setActiveWorkspace: (id: number) => void
+  createWorkspace: (name: string) => Workspace
+  renameWorkspace: (id: number, name: string) => void
+  deleteWorkspace: (id: number) => void
   touchRoot: (path: string) => void
   forgetAll: () => void
   clearCache: () => void
@@ -84,10 +96,19 @@ export function openStore(file: string): {
     getMeta: db.prepare('SELECT value FROM meta WHERE key = ?'),
     setMeta: db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)'),
     upsertRoot: db.prepare(
-      'INSERT INTO roots (path, granted_at, label) VALUES (?, ?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at, label = excluded.label'
+      'INSERT INTO roots (path, granted_at, label, workspace_id) VALUES (?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET granted_at = excluded.granted_at, label = excluded.label, workspace_id = excluded.workspace_id'
     ),
-    deleteRoot: db.prepare('DELETE FROM roots WHERE path = ?'),
-    listRoots: db.prepare('SELECT path, label FROM roots ORDER BY granted_at ASC'),
+    deleteRoot: db.prepare('DELETE FROM roots WHERE path = ? AND workspace_id = ?'),
+    listRoots: db.prepare(
+      'SELECT path, label FROM roots WHERE workspace_id = ? ORDER BY granted_at ASC'
+    ),
+    listWorkspaces: db.prepare(
+      'SELECT w.id, w.name, (SELECT COUNT(*) FROM roots r WHERE r.workspace_id = w.id) AS roots FROM workspaces w ORDER BY w.created_at ASC'
+    ),
+    insertWorkspace: db.prepare('INSERT INTO workspaces (name, created_at) VALUES (?, ?)'),
+    renameWorkspace: db.prepare('UPDATE workspaces SET name = ? WHERE id = ?'),
+    deleteWorkspace: db.prepare('DELETE FROM workspaces WHERE id = ?'),
+    deleteWorkspaceRoots: db.prepare('DELETE FROM roots WHERE workspace_id = ?'),
     touchRoot: db.prepare('UPDATE roots SET last_scan_at = ? WHERE path = ?'),
     insertReceipt: db.prepare(
       'INSERT INTO receipts (left_ref, right_ref, created_at, rows_json, counts_json) VALUES (?, ?, ?, ?, ?)'
@@ -107,13 +128,32 @@ export function openStore(file: string): {
     snapshotBlob: db.prepare('SELECT path, blob FROM file_history WHERE id = ?')
   }
 
+  const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
+
   return {
     getMeta: (key) => (q.getMeta.get(key)?.['value'] as string | undefined) ?? null,
     setMeta: (key, value) => void q.setMeta.run(key, value),
-    rememberRoot: (path, label) => void q.upsertRoot.run(path, Date.now(), label ?? null),
-    forgetRoot: (path) => void q.deleteRoot.run(path),
+    rememberRoot: (path, label) => void q.upsertRoot.run(path, Date.now(), label ?? null, active()),
+    forgetRoot: (path) => void q.deleteRoot.run(path, active()),
     listRoots: () =>
-      (q.listRoots.all() as { path: string; label: string | null }[]).map((r) => ({ ...r })),
+      (q.listRoots.all(active()) as { path: string; label: string | null }[]).map((r) => ({
+        ...r
+      })),
+    listWorkspaces: () =>
+      (q.listWorkspaces.all() as { id: number; name: string; roots: number }[]).map((w) => ({
+        ...w
+      })),
+    activeWorkspace: active,
+    setActiveWorkspace: (id) => void q.setMeta.run('active_workspace', String(id)),
+    createWorkspace: (name) => {
+      const id = Number(q.insertWorkspace.run(name, Date.now()).lastInsertRowid)
+      return { id, name, roots: 0 }
+    },
+    renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
+    deleteWorkspace: (id) => {
+      q.deleteWorkspaceRoots.run(id)
+      q.deleteWorkspace.run(id)
+    },
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
     forgetAll: () =>

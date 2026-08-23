@@ -17,6 +17,11 @@ export const Channels = {
   workspaceRecent: 'workspace:recent',
   workspaceAddSsh: 'workspace:add-ssh',
   workspaceRemove: 'workspace:remove',
+  wsList: 'ws:list',
+  wsCreate: 'ws:create',
+  wsRename: 'ws:rename',
+  wsDelete: 'ws:delete',
+  wsSwitch: 'ws:switch',
   historyList: 'history:list',
   dataForget: 'data:forget',
   dataClear: 'data:clear',
@@ -39,6 +44,9 @@ export const Channels = {
   envFormat: 'env:format',
   envSet: 'env:set'
 } as const
+
+/** A named set of roots. One is active at a time. */
+export type Workspace = { id: number; name: string; roots: number }
 
 /** A granted root: a local folder or ssh://host/path. */
 export type RootInfo = { path: string; kind: 'local' | 'ssh'; label: string }
@@ -72,6 +80,7 @@ export type EnvShape = { path: string; name: string; entries: KeyEntry[] }
 export type HistoryKind =
   | 'grant'
   | 'revoke'
+  | 'workspace'
   | 'scan'
   | 'compare'
   | 'forget'
@@ -189,6 +198,12 @@ export type PlumbrApi = {
   /** Verify over ssh, then grant and remember. `host` is anything ssh accepts: alias, user@host. */
   addSshRoot: (req: { host: string; path: string }) => Promise<RootInfo>
   removeRoot: (path: string) => Promise<void>
+  listWorkspaces: () => Promise<{ active: number; all: Workspace[] }>
+  createWorkspace: (name: string) => Promise<Workspace>
+  renameWorkspace: (req: { id: number; name: string }) => Promise<void>
+  deleteWorkspace: (id: number) => Promise<void>
+  /** Make a workspace active: grants swap to its roots. Returns them. */
+  switchWorkspace: (id: number) => Promise<RootInfo[]>
   listHistory: () => Promise<HistoryEvent[]>
   /** Wipe roots, receipts and history. Keeps the fingerprint key. */
   forgetData: () => Promise<void>
