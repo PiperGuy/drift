@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { LicenseForm } from '@/components/app/LicenseForm'
 import { McpClients } from '@/components/app/McpClients'
+import { HistoryPage } from '@/pages/History'
+import { AgentsPage } from '@/pages/Agents'
 import { useWorkspace, DEFAULT_IGNORE } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 
@@ -66,7 +68,6 @@ export function SettingsPage(): React.JSX.Element {
   const { theme, setTheme } = useTheme()
   const license = useWorkspace((s) => s.license)
   const reset = useWorkspace((s) => s.reset)
-  const setPage = useWorkspace((s) => s.setPage)
   const setOnboarded = useWorkspace((s) => s.setOnboarded)
   useEffect(() => {
     window.plumbr.appInfo().then(setInfo)
@@ -177,18 +178,25 @@ export function SettingsPage(): React.JSX.Element {
             <McpClients disabled={settings?.mcpEnabled === false} />
             <Hint>
               One click adds a <code className="font-mono">drift</code> entry to that client&apos;s
-              own MCP config; Claude Code also gets the Drift skill. Manual config is on the{' '}
-              <button
-                type="button"
-                className="text-lemon-ink underline-offset-2 hover:underline"
-                onClick={() => setPage('agents')}
-              >
-                Agents
-              </button>{' '}
-              page.
+              own MCP config; Claude Code also gets the Drift skill. Manual config is below.
             </Hint>
           </Row>
         </Section>
+        <div className="elev mt-3 h-[30rem] overflow-hidden rounded-lg border bg-card">
+          <AgentsPage />
+        </div>
+
+        <Section title="Audit log">
+          <Row label="On this machine">
+            <Hint>
+              Everything the app did, and a snapshot of every file before it was changed. Restore
+              from the Snapshots tab.
+            </Hint>
+          </Row>
+        </Section>
+        <div className="elev mt-3 h-[30rem] overflow-hidden rounded-lg border bg-card">
+          <HistoryPage />
+        </div>
 
         <Section title="Updates">
           <Row label="Version">

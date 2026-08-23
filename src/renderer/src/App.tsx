@@ -1,98 +1,50 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import {
-  Bot,
-  FolderSearch,
-  History,
-  Link2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Receipt,
-  Settings,
-  Upload,
-  type LucideIcon
-} from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { ArrowRightLeft, FolderSearch, PanelLeft, Search, Settings } from 'lucide-react'
+import { toast } from 'sonner'
 import { Logo } from '@/components/app/Logo'
-import { ThemeToggle } from '@/components/app/ThemeToggle'
 import { StatusBar } from '@/components/app/StatusBar'
-import { WorkspacePage } from '@/pages/Workspace'
-import { ReceiptPage } from '@/pages/Receipt'
-import { PlannedPage } from '@/pages/Planned'
-import { SettingsPage } from '@/pages/Settings'
-import { HistoryPage } from '@/pages/History'
-import { AgentsPage } from '@/pages/Agents'
 import { Lock } from '@/components/app/Lock'
 import { WorkspaceSwitcher } from '@/components/app/WorkspaceSwitcher'
-import { toast } from 'sonner'
+import { ProjectList } from '@/components/app/ProjectList'
+import { WorkspacePage } from '@/pages/Workspace'
+import { ReceiptPage } from '@/pages/Receipt'
+import { SettingsPage } from '@/pages/Settings'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { useWorkspace, type PageId } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { MAKER, PRODUCT } from '@shared/product'
 
-type NavItem = { id: PageId; label: string; icon: LucideIcon }
-
-/** What runs on this machine today. */
-const LOCAL: NavItem[] = [
-  { id: 'workspace', label: 'Workspace', icon: FolderSearch },
-  { id: 'receipt', label: 'Receipt', icon: Receipt },
-  { id: 'history', label: 'History', icon: History },
-  { id: 'agents', label: 'Agents', icon: Bot }
-]
-/** Surfaces that exist on the site roadmap but are not implemented in this build. */
-const ROADMAP: NavItem[] = [
-  { id: 'sync', label: 'Sync', icon: Upload },
-  { id: 'share', label: 'Share', icon: Link2 }
-]
-const ORDER: PageId[] = [...LOCAL, ...ROADMAP].map((n) => n.id).concat('settings')
-
 const isMac = navigator.platform.startsWith('Mac')
 const MOD = isMac ? '⌘' : 'Ctrl+'
+/** The two working views. Settings is reached from the footer and Cmd/Ctrl+, */
+const VIEWS: { id: PageId; label: string; icon: typeof FolderSearch }[] = [
+  { id: 'workspace', label: 'Workspace', icon: FolderSearch },
+  { id: 'receipt', label: 'Compare', icon: ArrowRightLeft }
+]
 
-function NavButton({
-  id,
-  label,
-  icon: Icon,
-  active,
-  dot,
-  collapsed,
-  onSelect
-}: NavItem & {
-  active: boolean
-  dot: string | null
-  collapsed: boolean
-  onSelect: (id: PageId) => void
-}): React.JSX.Element {
-  const i = ORDER.indexOf(id) + 1
+/** Drag handle on the sidebar's right edge. */
+function Resizer(): React.JSX.Element {
+  const setWidth = useWorkspace((s) => s.setSidebarWidth)
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(id)}
-      aria-current={active ? 'page' : undefined}
-      aria-label={collapsed ? label : undefined}
-      title={`${label} (${MOD}${i})`}
-      className={cn(
-        'press group relative flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] transition-colors duration-(--duration-fast)',
-        collapsed && 'justify-center px-0',
-        active
-          ? 'font-medium text-sidebar-accent-foreground'
-          : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
-      )}
-    >
-      <Icon className={cn('size-4 shrink-0', active && 'text-lemon-ink')} aria-hidden="true" />
-      {collapsed ? (
-        dot && (
-          <span
-            className={cn('absolute top-1.5 right-1.5 size-1.5 rounded-full', dot)}
-            aria-hidden="true"
-          />
-        )
-      ) : (
-        <>
-          <span className="flex-1 truncate">{label}</span>
-          {dot && <span className={cn('size-1.5 rounded-full', dot)} aria-hidden="true" />}
-          <kbd className="opacity-0 transition-opacity group-hover:opacity-100">{i}</kbd>
-        </>
-      )}
-    </button>
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      title="Drag to resize"
+      className="no-drag absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-lemon-ink/40 active:bg-lemon-ink/60"
+      onPointerDown={(e) => {
+        e.preventDefault()
+        const target = e.currentTarget
+        target.setPointerCapture(e.pointerId)
+        const move = (ev: PointerEvent): void => setWidth(ev.clientX)
+        const up = (): void => {
+          target.removeEventListener('pointermove', move)
+          target.removeEventListener('pointerup', up)
+        }
+        target.addEventListener('pointermove', move)
+        target.addEventListener('pointerup', up)
+      }}
+    />
   )
 }
 
@@ -106,13 +58,16 @@ export default function App(): React.JSX.Element {
   const onboarded = useWorkspace((s) => s.onboarded)
   const collapsed = useWorkspace((s) => s.sidebarCollapsed)
   const toggleSidebar = useWorkspace((s) => s.toggleSidebar)
+  const width = useWorkspace((s) => s.sidebarWidth)
+  const fullscreen = useWorkspace((s) => s.fullscreen)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const init = useWorkspace((s) => s.init)
   useEffect(() => {
     void init()
   }, [init])
 
-  // Tray → compare again; main → update lifecycle.
+  // Tray → compare again; main → update lifecycle and full-screen state.
   useEffect(() => {
     const offTray = window.plumbr.onTrayCompare(() => {
       const s = useWorkspace.getState()
@@ -129,181 +84,192 @@ export default function App(): React.JSX.Element {
           action: { label: 'Restart to update', onClick: () => void window.plumbr.installUpdate() }
         })
     })
+    const offFs = window.plumbr.onFullscreen((on) => useWorkspace.setState({ fullscreen: on }))
     return () => {
       offTray()
       offUpdate()
+      offFs()
     }
   }, [])
+
+  const focusSearch = (): void => {
+    if (useWorkspace.getState().sidebarCollapsed) toggleSidebar()
+    setTimeout(() => {
+      searchRef.current?.focus()
+      searchRef.current?.select()
+    }, 0)
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const mod = isMac ? e.metaKey : e.ctrlKey
       if (!mod || e.altKey || e.shiftKey) return
-      const n = Number(e.key)
-      if (n >= 1 && n <= ORDER.length) {
+      const k = e.key.toLowerCase()
+      if (k === '1' || k === '2') {
         e.preventDefault()
-        setPage(ORDER[n - 1])
-      } else if (e.key === ',') {
+        setPage(VIEWS[Number(k) - 1].id)
+      } else if (k === ',') {
         e.preventDefault()
         setPage('settings')
-      } else if (e.key.toLowerCase() === 'b') {
+      } else if (k === 'b') {
         e.preventDefault()
         toggleSidebar()
+      } else if (k === 'f' && page === 'workspace') {
+        e.preventDefault()
+        focusSearch()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [setPage, toggleSidebar])
-
-  const receiptDot = receipt
-    ? receipt.clean
-      ? 'bg-ok'
-      : 'bg-warn'
-    : paired
-      ? 'bg-lemon-ink'
-      : null
-  const item = (n: NavItem): React.JSX.Element => (
-    <div key={n.id} data-nav={n.id}>
-      <NavButton
-        {...n}
-        active={page === n.id}
-        dot={n.id === 'receipt' ? receiptDot : null}
-        collapsed={collapsed}
-        onSelect={setPage}
-      />
-    </div>
-  )
-
-  // One lemon indicator slides to the active item. Measured, not computed, so
-  // section headings and gaps never need to be mirrored in JS.
-  const navRef = useRef<HTMLElement>(null)
-  const [ind, setInd] = useState<{ y: number; h: number } | null>(null)
-  useLayoutEffect(() => {
-    const nav = navRef.current
-    const el = nav?.querySelector<HTMLElement>(`[data-nav="${page}"]`)
-    if (!nav || !el) return
-    setInd({ y: el.offsetTop, h: el.offsetHeight })
-  }, [page, collapsed])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setPage, toggleSidebar, page])
 
   // Trial over: the whole window is the lock screen. Main refuses data IPCs too.
   if (license?.state === 'expired') return <Lock reason={license.reason} />
   // First run: the journey owns the whole window until finished or skipped.
   if (onboarded === false) return <OnboardingPage />
 
+  const compareDot = receipt
+    ? receipt.clean
+      ? 'bg-ok'
+      : 'bg-warn'
+    : paired
+      ? 'bg-lemon-ink'
+      : null
+  // macOS traffic lights need a strip of their own unless the window is full screen.
+  const strip = isMac && !fullscreen
+
   return (
     <div className="flex h-full">
       <aside
-        className={cn(
-          'drag flex shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-(--duration-base) ease-(--ease-out)',
-          collapsed ? 'w-14' : 'w-52'
-        )}
+        style={{ width: collapsed ? 56 : width }}
+        className="drag relative flex shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-(--duration-base) ease-(--ease-out)"
         data-collapsed={collapsed || undefined}
       >
+        {/* Top strip: traffic lights (mac), sidebar toggle, search. */}
         <div
           className={cn(
-            'flex h-12 items-center gap-2.5 pt-1',
-            // macOS traffic lights sit over the top-left corner of a hiddenInset window.
-            isMac && 'mt-7',
-            collapsed ? 'justify-center' : 'px-3 pl-[max(0.75rem,env(titlebar-area-x,0.75rem))]'
+            'flex shrink-0 items-center gap-1 px-2',
+            strip ? 'h-12 pt-1 pl-[max(0.5rem,env(titlebar-area-x,5rem))]' : 'h-10',
+            collapsed && 'flex-col justify-center py-2'
           )}
         >
-          <Logo size={24} />
-          {!collapsed && (
-            <span className="flex items-baseline gap-1.5 text-sm font-semibold tracking-tight whitespace-nowrap">
-              {PRODUCT}
-              <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
-                by {MAKER}
-              </span>
-            </span>
-          )}
-        </div>
-        <nav
-          ref={navRef}
-          className="no-drag relative flex flex-1 flex-col gap-4 px-2 pt-1"
-          aria-label="Primary"
-        >
-          {ind && (
-            <span
-              aria-hidden="true"
-              className="nav-ind pointer-events-none absolute left-2 right-2 top-0 rounded-md bg-sidebar-accent"
-              style={{ translate: `0 ${ind.y}px`, height: ind.h }}
-            />
-          )}
-          <WorkspaceSwitcher collapsed={collapsed} />
-          <div className="space-y-0.5">
-            <p className={cn('nav-h', collapsed && 'sr-only')}>On this machine</p>
-            {LOCAL.map(item)}
-          </div>
-          <div className="space-y-0.5">
-            <p className={cn('nav-h', collapsed && 'sr-only')}>Coming soon</p>
-            {collapsed && <hr className="mx-2 mb-1 border-sidebar-border" aria-hidden="true" />}
-            {ROADMAP.map(item)}
-          </div>
-          <div className="mt-auto space-y-0.5 pb-1">
-            {item({ id: 'settings', label: 'Settings', icon: Settings })}
-          </div>
-        </nav>
-        <div
-          className={cn(
-            'no-drag flex items-center border-t py-1.5 text-[11px] text-muted-foreground',
-            collapsed ? 'flex-col gap-1' : 'justify-between px-2 pl-3'
-          )}
-        >
-          {!collapsed && <span className="whitespace-nowrap">On your machine</span>}
-          <ThemeToggle />
+          {strip && !collapsed && <span className="w-16 shrink-0" aria-hidden="true" />}
           <button
             type="button"
             onClick={toggleSidebar}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-expanded={!collapsed}
             title={`${collapsed ? 'Expand' : 'Collapse'} sidebar (${MOD}B)`}
-            className="press grid size-8 place-items-center rounded-md hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            className="no-drag press grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
           >
-            {collapsed ? (
-              <PanelLeftOpen className="size-4" aria-hidden="true" />
-            ) : (
-              <PanelLeftClose className="size-4" aria-hidden="true" />
-            )}
+            <PanelLeft className="size-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPage('workspace')
+              focusSearch()
+            }}
+            aria-label="Search"
+            title={`Search (${MOD}F)`}
+            className="no-drag press grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            <Search className="size-4" aria-hidden="true" />
           </button>
         </div>
+
+        {/* View switch */}
+        <div
+          role="tablist"
+          aria-label="View"
+          className={cn(
+            'no-drag mx-2 mb-2 grid gap-1 rounded-lg bg-sidebar-accent/60 p-1',
+            collapsed ? 'grid-cols-1' : 'grid-cols-2'
+          )}
+        >
+          {VIEWS.map((v, i) => (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={page === v.id}
+              aria-label={collapsed ? v.label : undefined}
+              title={`${v.label} (${MOD}${i + 1})`}
+              onClick={() => setPage(v.id)}
+              className={cn(
+                'press relative flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors duration-(--duration-fast)',
+                page === v.id
+                  ? 'elev bg-card text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <v.icon
+                className={cn('size-4', page === v.id && 'text-lemon-ink')}
+                aria-hidden="true"
+              />
+              {!collapsed && v.label}
+              {v.id === 'receipt' && compareDot && (
+                <span
+                  className={cn('absolute top-1.5 right-1.5 size-1.5 rounded-full', compareDot)}
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="no-drag mb-1">
+          <WorkspaceSwitcher collapsed={collapsed} />
+        </div>
+
+        {!collapsed && (
+          <div className="no-drag flex min-h-0 flex-1 flex-col">
+            <ProjectList searchRef={searchRef} onPick={() => setPage('workspace')} />
+          </div>
+        )}
+        {collapsed && <div className="flex-1" />}
+
+        {/* Footer: settings, then the brand when there is room for it. */}
+        <div
+          className={cn(
+            'no-drag flex shrink-0 items-center border-t px-2 py-1.5',
+            collapsed ? 'justify-center' : 'gap-2'
+          )}
+        >
+          <button
+            type="button"
+            onClick={() => setPage('settings')}
+            aria-current={page === 'settings' ? 'page' : undefined}
+            aria-label="Settings"
+            title={`Settings (${MOD},)`}
+            className={cn(
+              'press grid size-8 shrink-0 place-items-center rounded-md hover:bg-sidebar-accent hover:text-sidebar-foreground',
+              page === 'settings' ? 'bg-sidebar-accent text-lemon-ink' : 'text-muted-foreground'
+            )}
+          >
+            <Settings className="size-4" aria-hidden="true" />
+          </button>
+          {!collapsed && (
+            <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap">
+              <Logo size={16} />
+              <span className="font-semibold">{PRODUCT}</span>
+              <span className="text-[10px] text-muted-foreground">by {MAKER}</span>
+            </span>
+          )}
+        </div>
+        {!collapsed && <Resizer />}
       </aside>
+
       <div className="relative flex min-w-0 flex-1 flex-col">
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden" key={page}>
           <div className="enter h-full">
             {page === 'workspace' && <WorkspacePage />}
             {page === 'receipt' && <ReceiptPage />}
-            {page === 'sync' && (
-              <PlannedPage
-                title="Platform sync, human-approved"
-                blurb="A receipt becomes a plan, you read it, you approve it here. Only then would anything land on a platform. This build has no write path at all: nothing is sent anywhere."
-                points={[
-                  'GitHub Actions',
-                  'Vercel',
-                  'Railway',
-                  'Render',
-                  'Dokploy',
-                  'Coolify',
-                  'AWS Secrets Manager',
-                  'HashiCorp Vault KV v2'
-                ]}
-                today="Dry-run plans already work from the Receipt page. They are descriptive only."
-              />
-            )}
-            {page === 'share' && (
-              <PlannedPage
-                title="Share links instead of Slack"
-                blurb="Hand off a file with a link that expires by time or view count, sealed on this device before it leaves and revocable from the app. Needs a small relay, which does not exist yet."
-                points={[
-                  'Sealed on device before upload',
-                  'Expiry by time or open count',
-                  'Revoke from the app',
-                  'Recipient decrypts in the browser, no account'
-                ]}
-              />
-            )}
-            {page === 'history' && <HistoryPage />}
-            {page === 'agents' && <AgentsPage />}
             {page === 'settings' && <SettingsPage />}
+            {(page === 'sync' || page === 'share' || page === 'history' || page === 'agents') && (
+              <SettingsPage />
+            )}
           </div>
         </main>
         <StatusBar />

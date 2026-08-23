@@ -28,7 +28,7 @@ function Empty({ onWorkspace }: { onWorkspace: () => void }): React.JSX.Element 
   return (
     <div className="dotgrid flex h-full items-center justify-center p-8">
       <div className="elev max-w-md rounded-lg border bg-card p-6 text-center">
-        <h1 className="text-base font-semibold tracking-tight">No pair selected</h1>
+        <h1 className="text-base font-semibold tracking-tight">Nothing to compare yet</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
           In Workspace, mark one file as A (source) and another as B (target). The receipt lists
           every key with a class: same, changed, missing, extra, blank or ignored. Values are

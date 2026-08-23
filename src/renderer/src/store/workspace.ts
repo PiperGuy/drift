@@ -18,6 +18,12 @@ export const PAGES = [
 export type PageId = (typeof PAGES)[number]
 
 /** Redacted summary of one file: how many keys, how many blank. Never a value. */
+/** What the Add/Update source dialog submits. */
+export type SourceSpec =
+  | { kind: 'local'; name: string }
+  | { kind: 'ssh'; name: string; host: string; path: string }
+  | { kind: 'rename'; name: string }
+
 export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
 
 /** Group label for files outside any Git project. */
@@ -52,6 +58,14 @@ type State = {
   /** An open file viewer has unsaved edits: navigation and root changes must ask first. */
   viewerDirty: boolean
   setViewerDirty: (v: boolean) => void
+  /** Workspace search: project name, file path, key name. Shared by sidebar and table. */
+  search: string
+  setSearch: (q: string) => void
+  /** Sidebar width in px (expanded). */
+  sidebarWidth: number
+  setSidebarWidth: (w: number) => void
+  /** macOS full screen hides the traffic lights; the top strip follows. */
+  fullscreen: boolean
   /** Keys written this session, for the status bar. */
   written: number
   noteWritten: (n: number) => void
@@ -82,8 +96,12 @@ type State = {
   init: () => Promise<void>
   /** Back to first run. */
   reset: () => void
-  /** OS folder picker → add a local root. */
-  grant: () => Promise<void>
+  /** OS folder picker → add a local root to the active source. Resolves false if cancelled. */
+  grant: () => Promise<boolean>
+  /** Create a source (a workspace with one root) and make it active. Name defaults from the root. */
+  createSource: (req: SourceSpec) => Promise<void>
+  /** Rename the active source and, if the root changed, swap it. */
+  updateSource: (req: SourceSpec) => Promise<void>
   addSsh: (host: string, path: string) => Promise<void>
   removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
@@ -106,6 +124,28 @@ export const useWorkspace = create<State>((set, get) => ({
   setLicense: (license) => set({ license }),
   viewerDirty: false,
   setViewerDirty: (v) => set({ viewerDirty: v }),
+  search: '',
+  setSearch: (q) => set({ search: q }),
+  sidebarWidth: (() => {
+    try {
+      return Math.min(
+        480,
+        Math.max(200, Number(localStorage.getItem('plumbr-sidebar-width')) || 260)
+      )
+    } catch {
+      return 260
+    }
+  })(),
+  setSidebarWidth: (w) => {
+    const v = Math.min(480, Math.max(200, Math.round(w)))
+    try {
+      localStorage.setItem('plumbr-sidebar-width', String(v))
+    } catch {
+      /* ignore */
+    }
+    set({ sidebarWidth: v })
+  },
+  fullscreen: false,
   written: 0,
   noteWritten: (n) => set((s) => ({ written: s.written + n })),
   sidebarCollapsed: readCollapsed(),
@@ -209,15 +249,67 @@ export const useWorkspace = create<State>((set, get) => ({
     }),
 
   grant: async () => {
-    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
+    if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?'))
+      return false
     set({ viewerDirty: false })
     const root = await window.plumbr.pickWorkspace()
-    if (!root) return
+    if (!root) return false
     set((s) => ({
       roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
     }))
     void get().loadWorkspaces()
     await get().rescan()
+    return true
+  },
+
+  createSource: async (req) => {
+    if (req.kind === 'rename') return
+    const before = get().workspace
+    const name = req.name.trim() || (req.kind === 'ssh' ? `${req.host}:${req.path}` : 'New source')
+    const w = await window.plumbr.createWorkspace(name)
+    await get().loadWorkspaces()
+    await get().switchWorkspace(w.id)
+    try {
+      if (req.kind === 'ssh') {
+        await get().addSsh(req.host, req.path)
+      } else {
+        const ok = await get().grant()
+        if (!ok) throw new Error('cancelled')
+        // Default the name from the folder when the user left it blank.
+        if (!req.name.trim()) {
+          const path = get().roots[0]?.path ?? ''
+          const base = path.split(/[\\/]/).filter(Boolean).pop()
+          if (base) await get().renameWorkspace(w.id, base)
+        }
+      }
+    } catch (e) {
+      // Nothing got connected: drop the empty source and go back.
+      await window.plumbr.deleteWorkspace(w.id).catch(() => {})
+      await get().loadWorkspaces()
+      await get().switchWorkspace(before)
+      if (!(e instanceof Error && e.message === 'cancelled')) throw e
+    }
+  },
+
+  updateSource: async (req) => {
+    const id = get().workspace
+    const current = get().workspaces.find((w) => w.id === id)
+    if (!current) return
+    if (req.name.trim() && req.name.trim() !== current.name)
+      await get().renameWorkspace(id, req.name.trim())
+    const old = get().roots[0]
+    if (req.kind === 'ssh') {
+      const next = `ssh://${req.host}${req.path.replace(/\/+$/, '') || '/'}`
+      if (old?.path !== next) {
+        await get().addSsh(req.host, req.path)
+        if (old) await get().removeRoot(old.path)
+      }
+    } else if (req.kind === 'local') {
+      // The caller passes kind 'local' only when the user chose a different directory.
+      const ok = await get().grant()
+      if (ok && old) await get().removeRoot(old.path)
+    }
+    await get().loadWorkspaces()
   },
 
   addSsh: async (host, path) => {

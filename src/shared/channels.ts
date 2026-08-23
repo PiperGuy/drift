@@ -43,11 +43,12 @@ export const Channels = {
   envView: 'env:view',
   envFormat: 'env:format',
   envSet: 'env:set',
-  envRevealAll: 'env:reveal-all'
+  envRevealAll: 'env:reveal-all',
+  windowFullscreen: 'window:fullscreen'
 } as const
 
-/** A named set of roots. One is active at a time. */
-export type Workspace = { id: number; name: string; roots: number }
+/** A source the user switches between: a named set of roots (usually one). `path` is its first root. */
+export type Workspace = { id: number; name: string; roots: number; path: string | null }
 
 /** A granted root: a local folder or ssh://host/path. */
 export type RootInfo = { path: string; kind: 'local' | 'ssh'; label: string }
@@ -229,6 +230,8 @@ export type PlumbrApi = {
   installUpdate: () => Promise<void>
   /** Tray → "Compare again". */
   onTrayCompare: (cb: () => void) => () => void
+  /** macOS full-screen transitions. */
+  onFullscreen: (cb: (on: boolean) => void) => () => void
   /** The only write path. Main snapshots the target first. */
   applyPlan: (req: ApplyRequest) => Promise<ApplyResult>
   listSnapshots: () => Promise<Snapshot[]>

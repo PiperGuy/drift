@@ -37,6 +37,12 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('enter-full-screen', () =>
+    mainWindow?.webContents.send(Channels.windowFullscreen, true)
+  )
+  mainWindow.on('leave-full-screen', () =>
+    mainWindow?.webContents.send(Channels.windowFullscreen, false)
+  )
   mainWindow.on('closed', () => (mainWindow = null))
   // Menu-bar app: closing the window parks it in the tray. Quit is explicit.
   mainWindow.on('close', (e) => {

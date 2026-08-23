@@ -103,7 +103,7 @@ export function openStore(file: string): {
       'SELECT path, label FROM roots WHERE workspace_id = ? ORDER BY granted_at ASC'
     ),
     listWorkspaces: db.prepare(
-      'SELECT w.id, w.name, (SELECT COUNT(*) FROM roots r WHERE r.workspace_id = w.id) AS roots FROM workspaces w ORDER BY w.created_at ASC'
+      'SELECT w.id, w.name, (SELECT COUNT(*) FROM roots r WHERE r.workspace_id = w.id) AS roots, (SELECT path FROM roots r WHERE r.workspace_id = w.id ORDER BY granted_at ASC LIMIT 1) AS path FROM workspaces w ORDER BY w.created_at ASC'
     ),
     insertWorkspace: db.prepare('INSERT INTO workspaces (name, created_at) VALUES (?, ?)'),
     renameWorkspace: db.prepare('UPDATE workspaces SET name = ? WHERE id = ?'),
@@ -140,14 +140,14 @@ export function openStore(file: string): {
         ...r
       })),
     listWorkspaces: () =>
-      (q.listWorkspaces.all() as { id: number; name: string; roots: number }[]).map((w) => ({
-        ...w
-      })),
+      (
+        q.listWorkspaces.all() as { id: number; name: string; roots: number; path: string | null }[]
+      ).map((w) => ({ ...w })),
     activeWorkspace: active,
     setActiveWorkspace: (id) => void q.setMeta.run('active_workspace', String(id)),
     createWorkspace: (name) => {
       const id = Number(q.insertWorkspace.run(name, Date.now()).lastInsertRowid)
-      return { id, name, roots: 0 }
+      return { id, name, roots: 0, path: null }
     },
     renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
     deleteWorkspace: (id) => {

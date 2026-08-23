@@ -7,6 +7,8 @@ import type { EnvFileInfo, PlumbrApi, ScanResult } from '@shared/channels'
 import { compareEnv } from '@shared/drift'
 import { projectKey, useWorkspace } from '@/store/workspace'
 import { WorkspacePage } from './Workspace'
+import { ProjectList } from '@/components/app/ProjectList'
+import { createRef } from 'react'
 import { ReceiptPage } from './Receipt'
 
 const file = (rel: string, project: string | null): EnvFileInfo => ({
@@ -75,8 +77,11 @@ const plumbr: PlumbrApi = {
     label: `${host}:${path}`
   })),
   removeRoot: vi.fn(async () => {}),
-  listWorkspaces: vi.fn(async () => ({ active: 1, all: [{ id: 1, name: 'Default', roots: 1 }] })),
-  createWorkspace: vi.fn(async (name) => ({ id: 2, name, roots: 0 })),
+  listWorkspaces: vi.fn(async () => ({
+    active: 1,
+    all: [{ id: 1, name: 'Default', roots: 1, path: '/ws' }]
+  })),
+  createWorkspace: vi.fn(async (name) => ({ id: 2, name, roots: 0, path: null })),
   renameWorkspace: vi.fn(async () => {}),
   deleteWorkspace: vi.fn(async () => {}),
   switchWorkspace: vi.fn(async () => []),
@@ -113,6 +118,7 @@ const plumbr: PlumbrApi = {
   onUpdate: vi.fn(() => () => {}),
   installUpdate: vi.fn(async () => {}),
   onTrayCompare: vi.fn(() => () => {}),
+  onFullscreen: vi.fn(() => () => {}),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',
@@ -143,18 +149,23 @@ function assertNoFingerprints(): void {
 }
 
 test('workspace: onboarding, then grouped overview with redacted key counts', async () => {
-  render(<WorkspacePage />)
+  // The project list lives in the sidebar; the page shows the selected project's files.
+  render(
+    <>
+      <ProjectList searchRef={createRef<HTMLInputElement>()} />
+      <WorkspacePage />
+    </>
+  )
   assert.ok(screen.getByRole('heading', { level: 1, name: /Add a folder or a server to Drift/ }))
 
   await act(() => useWorkspace.getState().grant())
   // First Git project opens by default with its environment matrix.
   const nav = screen.getByRole('navigation', { name: 'Projects' })
-  // Three project buttons plus the root's own remove control.
+  // Three project buttons; a single root has no remove control of its own.
   const projectButtons = within(nav)
     .getAllByRole('button')
     .filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Remove '))
   assert.equal(projectButtons.length, 3)
-  assert.ok(within(nav).getByRole('button', { name: 'Remove /ws' }))
   assert.ok(within(nav).getByText('no Git project'))
   const present = screen.getByRole('list', { name: 'Environments present' })
   assert.match(present.textContent!, /●\.env.*○local.*●staging.*○preview.*●production/)
@@ -164,18 +175,15 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
   assert.ok(screen.getByTitle('4 keys, 0 blank'))
   assertNoFingerprints()
 
-  // Tick two files and the receipt becomes reachable. Nothing selected: no compare bar at all.
+  // Nothing selected: no compare bar. Rows are buttons that open the file; compare is picked
+  // from the row's context menu (exercised via the store here; Radix menus need a real pointer).
   assert.equal(screen.queryByRole('button', { name: /^Compare/ }), null)
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Select api/.env to compare' }))
+  assert.ok(screen.getByRole('button', { name: 'Open api/.env' }))
+  const [envA, envB] = scan.files
+  act(() => useWorkspace.getState().pick('left', envA))
   const open = screen.getByRole('button', { name: /^Compare/ })
   assert.ok(open.hasAttribute('disabled'))
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Select api/.env.production to compare' }))
-  // A third file cannot be ticked while two are selected.
-  assert.ok(
-    screen
-      .getByRole('checkbox', { name: 'Select api/.env.staging to compare' })
-      .hasAttribute('disabled')
-  )
+  act(() => useWorkspace.getState().pick('right', envB))
   assert.ok(!open.hasAttribute('disabled'))
   assert.equal(useWorkspace.getState().left?.rel, 'api/.env')
   fireEvent.click(open)
@@ -189,7 +197,7 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
 
 test('receipt: empty state, then classes, filters, search and a plan with no apply', async () => {
   render(<ReceiptPage />)
-  assert.ok(screen.getByText('No pair selected'))
+  assert.ok(screen.getByText('Nothing to compare yet'))
 
   await act(async () => {
     useWorkspace.setState({

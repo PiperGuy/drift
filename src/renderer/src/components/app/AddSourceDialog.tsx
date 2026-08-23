@@ -111,38 +111,57 @@ function Field({
   )
 }
 
+/** Split ssh://user@host/path into the dialog's fields. */
+function fromRoot(path: string | null | undefined): { kind: SourceId; f: Record<string, string> } {
+  const m = path ? /^ssh:\/\/([^/]+)(\/.*)$/.exec(path) : null
+  if (m) return { kind: 'ssh', f: { host: m[1], path: m[2], user: 'ubuntu', region: 'us-east-1' } }
+  return { kind: 'local', f: { path: '/', user: 'ubuntu', region: 'us-east-1' } }
+}
+
 export function AddSourceDialog({
   onClose,
-  initial = 'local'
+  mode = 'new'
 }: {
   onClose: () => void
-  initial?: SourceId
+  /** 'edit' prefills from the active source; saving renames and, if changed, reconnects. */
+  mode?: 'new' | 'edit'
 }): React.JSX.Element {
-  const { grant, addSsh } = useWorkspace()
-  const [kind, setKind] = useState<SourceId>(initial)
+  const { createSource, updateSource, workspaces, workspace, roots } = useWorkspace()
+  const current = mode === 'edit' ? workspaces.find((w) => w.id === workspace) : undefined
+  const seed = fromRoot(current?.path ?? roots[0]?.path)
+  const [kind, setKind] = useState<SourceId>(mode === 'edit' ? seed.kind : 'local')
+  const [name, setName] = useState(current?.name ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [f, setF] = useState<Record<string, string>>({
-    path: '/',
-    user: 'ubuntu',
-    region: 'us-east-1'
-  })
+  const [f, setF] = useState<Record<string, string>>(
+    mode === 'edit' ? seed.f : { path: '/', user: 'ubuntu', region: 'us-east-1' }
+  )
+  const [repick, setRepick] = useState(false)
   const set = (k: string, v: string): void => setF((x) => ({ ...x, [k]: v }))
   const src = SOURCES.find((s) => s.id === kind)!
+
+  const spec = (): Parameters<typeof createSource>[0] => {
+    if (kind === 'ssh')
+      return { kind: 'ssh', name, host: f['host']?.trim() ?? '', path: f['path']?.trim() || '/' }
+    if (kind === 'ec2')
+      return {
+        kind: 'ssh',
+        name,
+        host: `${f['user']?.trim() || 'ubuntu'}@${f['host']?.trim() ?? ''}`,
+        path: f['path']?.trim() || '/'
+      }
+    return { kind: 'local', name }
+  }
 
   const connect = async (): Promise<void> => {
     setBusy(true)
     setError(null)
     try {
-      if (kind === 'local') {
-        await grant()
-      } else if (kind === 'ssh') {
-        await addSsh(f['host']?.trim() ?? '', f['path']?.trim() ?? '/')
-      } else if (kind === 'ec2') {
-        await addSsh(
-          `${f['user']?.trim() || 'ubuntu'}@${f['host']?.trim() ?? ''}`,
-          f['path']?.trim() ?? '/'
-        )
+      if (mode === 'edit') {
+        const s = spec()
+        await updateSource(s.kind === 'local' && !repick ? { kind: 'rename', name } : s)
+      } else {
+        await createSource(spec())
       }
       onClose()
     } catch (e) {
@@ -164,7 +183,7 @@ export function AddSourceDialog({
         <div className="grid grid-cols-[14rem_1fr]">
           <aside className="border-r bg-sidebar p-2" aria-label="Source types">
             <p className="px-2 pt-1 pb-2 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
-              Add a source
+              {mode === 'edit' ? 'Update source' : 'Add a source'}
             </p>
             {SOURCES.map((s) => (
               <button
@@ -216,6 +235,29 @@ export function AddSourceDialog({
             </DialogHeader>
 
             <fieldset className="mt-4 space-y-3" disabled={!src.available || busy}>
+              <Field
+                label="Name"
+                hint="How it shows in the source switcher. Leave empty to use the folder or host name."
+              >
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={kind === 'local' ? 'e.g. Work laptop' : 'e.g. Production VPS'}
+                  className="h-8 text-xs"
+                  autoComplete="off"
+                />
+              </Field>
+              {kind === 'local' && mode === 'edit' && (
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="accent-(--lemon-ink)"
+                    checked={repick}
+                    onChange={(e) => setRepick(e.target.checked)}
+                  />
+                  Choose a different directory
+                </label>
+              )}
               {kind === 'local' && (
                 <p className="text-xs text-muted-foreground">
                   The OS folder picker opens. Drift walks the folder, skips{' '}
@@ -445,11 +487,15 @@ export function AddSourceDialog({
                 )}
                 {!src.available
                   ? 'Coming soon'
-                  : kind === 'local'
-                    ? 'Choose directory'
-                    : busy
-                      ? 'Connecting'
-                      : 'Connect and scan'}
+                  : mode === 'edit'
+                    ? busy
+                      ? 'Saving'
+                      : 'Save'
+                    : kind === 'local'
+                      ? 'Choose directory'
+                      : busy
+                        ? 'Connecting'
+                        : 'Connect and scan'}
               </Button>
             </div>
           </form>

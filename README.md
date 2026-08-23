@@ -156,12 +156,15 @@ base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarizat
 via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
 
-## Workspaces
+## Sources and the sidebar
 
-The switcher at the top of the sidebar holds named workspaces, each its own set of roots
-(folders and servers). Switching swaps the granted roots, the scan and the current comparison;
-nothing on disk changes. New / Rename / Delete live in the same menu; the last one cannot be
-deleted. Everything else (history, snapshots, settings, licence) is shared.
+The sidebar (drag its edge to resize, ⌘/Ctrl+B to collapse) holds the **Workspace | Compare**
+switch, the **source** switcher and the project list with search (⌘/Ctrl+F). A source is a named
+folder or server; **Add source…**, **Update source…** (rename, or point it elsewhere) and
+**Remove source** live in the switcher menu, and the header has an Update source button. Switching
+sources swaps what is scanned and compared; nothing on disk changes. In the file table, click a row
+to open it and right-click for Compare as A / B, Sync and Share. Settings (gear, bottom-left) holds
+theme, licence, agents, the audit log with snapshots, and data.
 
 ## Roots: several folders, and servers over SSH
 

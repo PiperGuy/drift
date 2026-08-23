@@ -74,8 +74,11 @@ test('workspaces: default exists, roots scoped to the active one, delete cascade
       ['/a']
     )
     assert.deepEqual(
-      s.listWorkspaces().map((x) => x.roots),
-      [1, 1]
+      s.listWorkspaces().map((x) => [x.roots, x.path]),
+      [
+        [1, '/a'],
+        [1, 'ssh://vps/srv']
+      ]
     )
     s.deleteWorkspace(w.id)
     assert.deepEqual(
