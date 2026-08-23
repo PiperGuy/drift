@@ -66,7 +66,7 @@ export function AgentsPage(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto">
-      <header className="glow flex h-14 shrink-0 items-center gap-3 border-b px-5">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Agents</h1>
           <p className="font-mono text-[11px] text-muted-foreground">

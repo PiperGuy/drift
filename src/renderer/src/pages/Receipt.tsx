@@ -81,7 +81,7 @@ export function ReceiptPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="glow flex h-14 shrink-0 items-center gap-3 border-b px-5">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Drift receipt</h1>
           <p className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground">

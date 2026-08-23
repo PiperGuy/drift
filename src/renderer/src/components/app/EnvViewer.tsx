@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -9,6 +9,7 @@ import {
   Fingerprint,
   Info,
   Loader2,
+  Search,
   Sparkles,
   X
 } from 'lucide-react'
@@ -16,6 +17,7 @@ import { toast } from 'sonner'
 import type { EnvFileInfo } from '@shared/channels'
 import type { EnvView, LintIssue, Severity, ViewLine } from '@shared/env-lint'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 
@@ -138,6 +140,26 @@ export function EnvViewer({
 }): React.JSX.Element {
   const [view, setView] = useState<EnvView | null>(null)
   const [mode, setMode] = useState<'ui' | 'file'>('ui')
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  // Cmd/Ctrl+F inside the viewer targets this box; the page-level handler is shadowed while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+  const q = query.trim().toLowerCase()
+  const lineMatches = (l: ViewLine): boolean =>
+    !q ||
+    (l.kind === 'assign' && l.key.toLowerCase().includes(q)) ||
+    (l.kind === 'comment' && l.text.toLowerCase().includes(q))
   const [shown, setShown] = useState<{ key: string; value: string | null } | null>(null)
   const [formatting, setFormatting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -167,8 +189,9 @@ export function EnvViewer({
   for (const i of view?.lint ?? []) counts[i.severity]++
   const fixable = (view?.lint ?? []).filter((i) => i.fixable).length
   const assigns = (view?.lines ?? []).filter(
-    (l): l is Extract<ViewLine, { kind: 'assign' }> => l.kind === 'assign'
+    (l): l is Extract<ViewLine, { kind: 'assign' }> => l.kind === 'assign' && lineMatches(l)
   )
+  const fileLines = (view?.lines ?? []).filter(lineMatches)
 
   const format = async (): Promise<void> => {
     if (
@@ -201,6 +224,31 @@ export function EnvViewer({
         <span className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>
           {file.rel}
         </span>
+        <div className="relative w-44">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            ref={searchRef}
+            aria-label="Search keys in file"
+            placeholder="Search keys"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
+            className="h-7 pl-7 font-mono text-xs"
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
         <div role="tablist" aria-label="View mode" className="inline-flex rounded-md border p-0.5">
           {(['ui', 'file'] as const).map((m) => (
             <button
@@ -331,14 +379,16 @@ export function EnvViewer({
             )
           })}
           {assigns.length === 0 && (
-            <li className="p-6 text-center text-xs text-muted-foreground">No keys in this file.</li>
+            <li className="p-6 text-center text-xs text-muted-foreground">
+              {q ? 'No keys match.' : 'No keys in this file.'}
+            </li>
           )}
         </ul>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto font-mono text-xs">
           <table className="w-full border-collapse">
             <tbody className="stagger">
-              {view.lines.map((l, i) => {
+              {fileLines.map((l, i) => {
                 const issues = byLine.get(l.n) ?? []
                 const worst =
                   issues.find((x) => x.severity === 'error') ??
