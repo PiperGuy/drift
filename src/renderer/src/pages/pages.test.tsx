@@ -71,8 +71,11 @@ const plumbr: PlumbrApi = {
   listHistory: vi.fn(async () => []),
   forgetData: vi.fn(async () => {}),
   clearCache: vi.fn(async () => {}),
-  getSettings: vi.fn(async () => ({ mcpEnabled: true })),
-  setSettings: vi.fn(async (p) => ({ mcpEnabled: p.mcpEnabled ?? true })),
+  getSettings: vi.fn(async () => ({ mcpEnabled: true, onboarded: true })),
+  setSettings: vi.fn(async (p) => ({
+    mcpEnabled: p.mcpEnabled ?? true,
+    onboarded: p.onboarded ?? true
+  })),
   getLicense: vi.fn(async () => ({
     state: 'trial' as const,
     endsAt: Date.now() + 86_400_000,

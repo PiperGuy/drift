@@ -36,6 +36,9 @@ type State = {
   page: PageId
   /** null until main has answered; 'expired' locks the whole window. */
   license: LicenseState | null
+  /** null until main answers. false shows the first-run journey. */
+  onboarded: boolean | null
+  setOnboarded: (v: boolean) => Promise<void>
   setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
@@ -69,6 +72,11 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 export const useWorkspace = create<State>((set, get) => ({
   page: 'workspace',
   license: null,
+  onboarded: null,
+  setOnboarded: async (v) => {
+    await window.plumbr.setSettings({ onboarded: v })
+    set({ onboarded: v })
+  },
   setLicense: (license) => set({ license }),
   sidebarCollapsed: readCollapsed(),
   toggleSidebar: () =>
@@ -98,6 +106,7 @@ export const useWorkspace = create<State>((set, get) => ({
     const license = await window.plumbr.getLicense()
     set({ license })
     if (license.state === 'expired') return
+    set({ onboarded: (await window.plumbr.getSettings()).onboarded })
     const root = await window.plumbr.recentWorkspace()
     if (!root) return
     set({ root })

@@ -7,7 +7,10 @@ import { z } from 'zod'
 export * from './channels'
 
 export const ScanRequest = z.object({ root: z.string().min(1) })
-export const SettingsPatch = z.object({ mcpEnabled: z.boolean().optional() })
+export const SettingsPatch = z.object({
+  mcpEnabled: z.boolean().optional(),
+  onboarded: z.boolean().optional()
+})
 export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([
   'claude-code',

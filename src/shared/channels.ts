@@ -87,7 +87,7 @@ export type McpClientStatus = {
 }
 
 /** User settings persisted in the store. */
-export type Settings = { mcpEnabled: boolean }
+export type Settings = { mcpEnabled: boolean; onboarded: boolean }
 
 export type UpdateResult =
   | { status: 'current'; version: string }

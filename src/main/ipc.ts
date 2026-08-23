@@ -52,12 +52,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     'app.asar',
     'app.asar.unpacked'
   )
-  const settings = (): Settings => ({ mcpEnabled: store.getMeta('mcp_enabled') !== '0' })
+  const settings = (): Settings => ({
+    mcpEnabled: store.getMeta('mcp_enabled') !== '0',
+    onboarded: store.getMeta('onboarded') === '1'
+  })
 
   ipcMain.handle(Channels.settingsGet, settings)
   ipcMain.handle(Channels.settingsSet, (_e, raw: unknown) => {
     const patch = SettingsPatch.parse(raw)
     if (patch.mcpEnabled !== undefined) store.setMeta('mcp_enabled', patch.mcpEnabled ? '1' : '0')
+    if (patch.onboarded !== undefined) store.setMeta('onboarded', patch.onboarded ? '1' : '0')
     return settings()
   })
 
