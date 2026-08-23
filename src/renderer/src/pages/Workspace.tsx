@@ -290,7 +290,12 @@ export function WorkspacePage(): React.JSX.Element {
                   key={name}
                   type="button"
                   aria-current={active ? 'true' : undefined}
-                  onClick={() => openProject(name)}
+                  onClick={() => {
+                    // Switching projects closes the open file. The viewer is read-only today;
+                    // an unsaved-changes dialog belongs here once editing exists.
+                    setOpen(null)
+                    void openProject(name)
+                  }}
                   className={cn(
                     'press flex shrink-0 flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors duration-(--duration-fast) @3xl:w-full',
                     active ? 'elev border-border bg-card' : 'border-transparent hover:bg-accent/50'
