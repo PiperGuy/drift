@@ -1,6 +1,13 @@
 import { create } from 'zustand'
+import { toast } from 'sonner'
 import type { DriftReceipt } from '@shared/drift'
-import type { EnvFileInfo, RootInfo, ScanResult, Workspace } from '@shared/channels'
+import type {
+  EnvFileInfo,
+  RootInfo,
+  ScanResult,
+  VaultSourceSpec,
+  Workspace
+} from '@shared/channels'
 import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
@@ -22,6 +29,7 @@ export type PageId = (typeof PAGES)[number]
 export type SourceSpec =
   | { kind: 'local'; name: string }
   | { kind: 'ssh'; name: string; host: string; path: string }
+  | ({ kind: 'vault' } & VaultSourceSpec)
   | { kind: 'rename'; name: string }
 
 export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
@@ -106,6 +114,8 @@ type State = {
   /** Rename the active source and, if the root changed, swap it. */
   updateSource: (req: SourceSpec) => Promise<void>
   addSsh: (host: string, path: string) => Promise<void>
+  /** Preflight + connect a Vault source; the credential goes to main once and never returns. */
+  addVault: (spec: VaultSourceSpec) => Promise<RootInfo>
   removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
@@ -271,13 +281,22 @@ export const useWorkspace = create<State>((set, get) => ({
   createSource: async (req) => {
     if (req.kind === 'rename') return
     const before = get().workspace
-    const name = req.name.trim() || (req.kind === 'ssh' ? `${req.host}:${req.path}` : 'New source')
+    const name =
+      req.name.trim() ||
+      (req.kind === 'ssh'
+        ? `${req.host}:${req.path}`
+        : req.kind === 'vault'
+          ? `vault:${req.path}`
+          : 'New source')
     const w = await window.plumbr.createWorkspace(name)
     await get().loadWorkspaces()
     await get().switchWorkspace(w.id)
     try {
       if (req.kind === 'ssh') {
         await get().addSsh(req.host, req.path)
+      } else if (req.kind === 'vault') {
+        const root = await get().addVault(req)
+        if (!req.name.trim()) await get().renameWorkspace(w.id, root.label)
       } else {
         const ok = await get().grant()
         if (!ok) throw new Error('cancelled')
@@ -312,6 +331,10 @@ export const useWorkspace = create<State>((set, get) => ({
         await get().addSsh(req.host, req.path)
         if (old) await get().removeRoot(old.path)
       }
+    } else if (req.kind === 'vault') {
+      // Reconnect: a fresh connection replaces the old root (and its stored credential).
+      await get().addVault(req)
+      if (old) await get().removeRoot(old.path)
     } else if (req.kind === 'local') {
       // The caller passes kind 'local' only when the user chose a different directory.
       const ok = await get().grant()
@@ -328,6 +351,23 @@ export const useWorkspace = create<State>((set, get) => ({
     }))
     void get().loadWorkspaces()
     await get().rescan()
+  },
+
+  addVault: async (spec) => {
+    const { root, preflight } = await window.plumbr.vaultConnect(spec)
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    toast.success(`Connected ${root.label}`, {
+      description: `${preflight.kind === 'folder' ? 'Folder of environments' : 'One environment'} · Vault ${preflight.vaultVersion} · token ${
+        preflight.token.displayName || preflight.token.accessor
+      } (${preflight.token.policies.join(', ')})`
+    })
+    if (preflight.warnings.length)
+      toast.warning('Vault connection notes', { description: preflight.warnings.join(' ') })
+    void get().loadWorkspaces()
+    await get().rescan()
+    return root
   },
 
   removeRoot: async (path) => {

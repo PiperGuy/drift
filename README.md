@@ -63,19 +63,19 @@ npm run build:mac | build:win | build:linux   # installers via electron-builder
 
 The website promises these. Everything below is either done, in progress or on the todo list.
 
-| Feature                       | Site copy                                                                                                                                                | Status                                                              |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                        |
-| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                              |
-| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                             |
-| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal |
-| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                |
-| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                |
-| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                |
-| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | todo                                                                |
-| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                    |
-| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                |
-| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                |
+| Feature                       | Site copy                                                                                                                                                | Status                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                               |
+| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                                     |
+| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                                    |
+| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal        |
+| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                       |
+| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                       |
+| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                       |
+| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | Vault KV v2 done (source + CAS-guarded target, version history); rest todo |
+| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                           |
+| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                       |
+| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                       |
 
 ## Todo
 
@@ -112,7 +112,7 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 - [ ] Vercel: project env vars, production/preview/development targets, branch-scoped previews
 - [ ] Railway, Render (environment groups), Dokploy and Coolify (custom endpoint, custom CA)
 - [ ] AWS Secrets Manager: JSON secret ⇄ .env mapping, per-region, uses local AWS credentials
-- [ ] HashiCorp Vault KV v2: paths, namespaces, self-hosted or HCP
+- [x] HashiCorp Vault KV v2: paths, namespaces, self-hosted or HCP; token or AppRole auth, keyring opt-in, check-and-set writes, version history with compare and restore (`src/main/providers/vault/`)
 - [ ] Approval dialog: exact source → target plan, per-key ops, extra keys shown as "keep", one plan at a time
 - [ ] Integrations page in-app matching the site's support matrix
 
@@ -168,7 +168,8 @@ theme, licence, agents, the audit log with snapshots, and data.
 
 ## Roots: several folders, and servers over SSH
 
-Workspace → **Add source** opens the source picker: Local folder, SSH server, EC2 instance (SSH) work today; Docker, ECS, HashiCorp Vault and AWS Secrets Manager show their configuration and are marked coming soon.
+Workspace → **Add source** opens the source picker: Local folder, SSH server, EC2 instance (SSH) and HashiCorp Vault KV v2 work today; Docker, ECS and AWS Secrets Manager show their configuration and are marked coming soon.
+A Vault source points at one KV v2 secret (one environment) or a folder of them (each leaf becomes an environment). Connect runs a preflight (health, token, mount version, capabilities); reads render redacted shapes; every write is a reviewed, check-and-set-guarded new version, and the file header's History button compares and restores versions. Tokens stay in memory for the session unless you opt into the OS keyring. The MCP server deliberately cannot read Vault sources (credentials never leave the app).
 Every root is listed in the sidebar with its projects; the × on a root stops reading it (files
 untouched). SSH uses the `ssh` binary on your machine, so `~/.ssh/config` aliases, keys, the
 agent, ProxyJump and known_hosts all apply and Drift stores no credentials. Key/agent auth only

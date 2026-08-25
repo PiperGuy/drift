@@ -39,6 +39,15 @@ import {
   ViewRequestSchema
 } from '@shared/ipc'
 import { applyPlan, formatFile, rollback, setValues } from './write'
+import {
+  connectVault,
+  forgetVaultConnection,
+  registerVault,
+  vaultHistory,
+  vaultRestore,
+  vaultShapeAt
+} from './providers/vault'
+import { VaultRestoreSchema, VaultShapeAtSchema, VaultSourceSpecSchema } from '@shared/ipc'
 import { viewEnv } from '@shared/env-lint'
 import { envKind } from '@shared/env-file'
 import { assertGranted } from './workspace'
@@ -48,7 +57,13 @@ const toRoot = (path: string, label: string | null): RootInfo => {
   return {
     path,
     kind: r.kind,
-    label: label ?? (r.kind === 'ssh' ? `${r.host}:${r.path}` : path)
+    label:
+      label ??
+      (r.kind === 'ssh'
+        ? `${r.host}:${r.path}`
+        : r.kind === 'vault'
+          ? `${r.mount}/${r.path}`
+          : path)
   }
 }
 
@@ -62,6 +77,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     safeStorage
   )
   app.on('will-quit', () => store.close())
+  // Vault adapter: registers the vault:// backend for fs.ts and holds session tokens.
+  registerVault(store)
 
   // The server script is copied next to the database on every launch, so the path
   // clients store survives app updates and temporary AppImage mounts. The command is
@@ -165,7 +182,54 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const path = RootPath.parse(raw)
     revokeRoot(path)
     store.forgetRoot(path)
+    if (parseRef(path).kind === 'vault') {
+      // Drop the connection row and the in-memory token with the root.
+      forgetVaultConnection(store, path)
+      store.logEvent('connection', { action: 'remove', root: path })
+    }
     store.logEvent('revoke', { root: path })
+  })
+
+  ipcMain.handle(Channels.vaultConnect, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const spec = VaultSourceSpecSchema.parse(raw)
+    const result = await connectVault(store, spec)
+    grantRoot(result.root.path)
+    store.rememberRoot(result.root.path, result.root.label)
+    // Redacted: host and mount/path only — never the namespace token or credentials.
+    store.logEvent(
+      'connection',
+      { action: 'add', root: result.root.path },
+      { kind: result.preflight.kind, warnings: result.preflight.warnings.length }
+    )
+    return result
+  })
+
+  ipcMain.handle(Channels.vaultHistory, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const path = RootPath.parse(raw)
+    assertGranted(path)
+    return vaultHistory(store, path)
+  })
+
+  ipcMain.handle(Channels.vaultShapeAt, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, version } = VaultShapeAtSchema.parse(raw)
+    assertGranted(path)
+    return vaultShapeAt(store, path, version)
+  })
+
+  ipcMain.handle(Channels.vaultRestore, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { path, version, expectedVersion } = VaultRestoreSchema.parse(raw)
+    assertGranted(path)
+    const r = await vaultRestore(store, path, version, expectedVersion)
+    store.logEvent(
+      'rollback',
+      { path, snapshot: r.snapshot },
+      { vault: `v${version} -> v${r.version?.next}` }
+    )
+    return r
   })
 
   const grantActive = (): RootInfo[] => {

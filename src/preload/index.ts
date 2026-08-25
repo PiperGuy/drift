@@ -42,6 +42,10 @@ const plumbr: PlumbrApi = {
   formatEnv: (req) => ipcRenderer.invoke(Channels.envFormat, req),
   setValues: (req) => ipcRenderer.invoke(Channels.envSet, req),
   sshHosts: () => ipcRenderer.invoke(Channels.sshHosts),
+  vaultConnect: (spec) => ipcRenderer.invoke(Channels.vaultConnect, spec),
+  vaultHistory: (path) => ipcRenderer.invoke(Channels.vaultHistory, path),
+  vaultShapeAt: (req) => ipcRenderer.invoke(Channels.vaultShapeAt, req),
+  vaultRestore: (req) => ipcRenderer.invoke(Channels.vaultRestore, req),
   onFullscreen: (cb) => {
     const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
     ipcRenderer.on(Channels.windowFullscreen, h)

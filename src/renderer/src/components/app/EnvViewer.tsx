@@ -23,6 +23,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { VaultVersions } from './VaultVersions'
+import { History as HistoryIcon } from 'lucide-react'
 
 const HIDE_AFTER_MS = 20_000
 
@@ -210,6 +212,8 @@ export function EnvViewer({
   const [all, setAll] = useState<Record<string, string> | null>(null)
   const [revealingAll, setRevealingAll] = useState(false)
   const [formatting, setFormatting] = useState(false)
+  const [versions, setVersions] = useState(false)
+  const isVault = file.path.startsWith('vault://')
   const [error, setError] = useState<string | null>(null)
   const rescan = useWorkspace((s) => s.rescan)
   const noteWritten = useWorkspace((s) => s.noteWritten)
@@ -373,6 +377,17 @@ export function EnvViewer({
           {counts.info > 0 && <span className="text-muted-foreground">{counts.info} hints</span>}
           {view && view.lint.length === 0 && <span className="text-ok">clean</span>}
         </span>
+        {isVault && (
+          <Button
+            size="xs"
+            variant="outline"
+            className="press"
+            title="Vault version history: compare and restore"
+            onClick={() => setVersions(true)}
+          >
+            <HistoryIcon /> {file.version ? `v${file.version}` : 'Versions'}
+          </Button>
+        )}
         <Button
           size="xs"
           variant={all ? 'default' : 'outline'}
@@ -745,10 +760,11 @@ export function EnvViewer({
           </table>
         </div>
       )}
+      {versions && <VaultVersions file={file} onClose={() => setVersions(false)} />}
       <p className="shrink-0 border-t px-4 py-1.5 text-[10px] text-muted-foreground">
-        Values are hidden. The first time you reveal one, the OS asks you to confirm; after that it
-        doesn&apos;t for the rest of the session. A value stays visible for 20 seconds. Format
-        tidies the file without changing what it means, and takes a snapshot first.
+        {isVault
+          ? 'A rendered view of the Vault secret: keys shown, values hidden. Changes happen through Compare \u2192 Apply or the version history, each one a check-and-set-guarded new version.'
+          : "Values are hidden. The first time you reveal one, the OS asks you to confirm; after that it doesn't for the rest of the session. A value stays visible for 20 seconds. Format tidies the file without changing what it means, and takes a snapshot first."}
       </p>
     </div>
   )

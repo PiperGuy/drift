@@ -16,25 +16,62 @@ import type { EnvFileInfo, ScanResult } from '@shared/channels'
  * Docker / ECS backends would be two more `parseRef` kinds with the same shape.
  * Remote targets are assumed to be Linux with GNU coreutils (a VPS).
  */
-export type Ref = { kind: 'local'; path: string } | { kind: 'ssh'; host: string; path: string }
+export type Ref =
+  | { kind: 'local'; path: string }
+  | { kind: 'ssh'; host: string; path: string }
+  | { kind: 'vault'; connectionId: number; mount: string; path: string }
 
 const SSH = /^ssh:\/\/([A-Za-z0-9._@-]+)(\/.*)$/
+const VAULT = /^vault:\/\/(\d+)\/([^/]+)\/(.+?)\/*$/
 
 export function parseRef(ref: string): Ref {
+  const v = VAULT.exec(ref)
+  if (v)
+    return {
+      kind: 'vault',
+      connectionId: Number(v[1]),
+      mount: decodeURIComponent(v[2]),
+      path: v[3]
+    }
   const m = SSH.exec(ref)
   return m ? { kind: 'ssh', host: m[1], path: m[2] } : { kind: 'local', path: ref }
 }
-export const isRemote = (ref: string): boolean => SSH.test(ref)
+export const isRemote = (ref: string): boolean => SSH.test(ref) || VAULT.test(ref)
 export const sshRef = (host: string, path: string): string => `ssh://${host}${path}`
-/** Join a relative path onto a ref of either kind. */
+export const vaultRef = (connectionId: number, mount: string, path: string): string =>
+  `vault://${connectionId}/${encodeURIComponent(mount)}/${path.replace(/^\/+|\/+$/g, '')}`
+/** Join a relative path onto a ref of any kind. */
 export function joinRef(root: string, rel: string): string {
   const r = parseRef(root)
+  if (r.kind === 'vault') return vaultRef(r.connectionId, r.mount, posix.join(r.path, rel))
   return r.kind === 'ssh' ? sshRef(r.host, posix.join(r.path, rel)) : join(r.path, rel)
 }
 export function relRef(root: string, ref: string): string {
   const a = parseRef(root)
   const b = parseRef(ref)
-  return a.kind === 'ssh' ? posix.relative(a.path, b.path) : relative(a.path, b.path)
+  return a.kind === 'local' ? relative(a.path, b.path) : posix.relative(a.path, b.path)
+}
+
+// ---------- vault backend seam ----------
+
+export type VaultRef = Extract<Ref, { kind: 'vault' }>
+/**
+ * The Vault adapter registers itself here (src/main/providers/vault). The MCP
+ * process never registers one, so vault:// refs fail there with a clear message
+ * instead of ever seeing a credential.
+ */
+export type VaultBackend = {
+  readText(ref: VaultRef): Promise<string>
+  stat(ref: VaultRef): Promise<Stat>
+  scan(root: string, ref: VaultRef): Promise<ScanResult>
+}
+let vaultBackend: VaultBackend | null = null
+export function registerVaultBackend(b: VaultBackend): void {
+  vaultBackend = b
+}
+function vb(): VaultBackend {
+  if (!vaultBackend) throw new Error('Vault sources are only available inside the Drift app.')
+  return vaultBackend
 }
 export function baseRef(ref: string): string {
   return posix.basename(parseRef(ref).path.replace(/\\/g, '/'))
@@ -124,11 +161,13 @@ export type Stat = { mtimeMs: number; size: number; mode?: number }
 export async function readText(ref: string): Promise<string> {
   const r = parseRef(ref)
   if (r.kind === 'local') return readFile(r.path, 'utf8')
+  if (r.kind === 'vault') return vb().readText(r)
   return sshExec(r.host, `cat ${q(r.path)}`)
 }
 
 export async function statRef(ref: string): Promise<Stat> {
   const r = parseRef(ref)
+  if (r.kind === 'vault') return vb().stat(r)
   if (r.kind === 'local') {
     const s = await stat(r.path)
     return { mtimeMs: s.mtimeMs, size: s.size, mode: s.mode }
@@ -145,6 +184,10 @@ export async function statRef(ref: string): Promise<Stat> {
 /** Temp file next to the target, then rename over it. Same guarantee locally and remotely. */
 export async function writeAtomic(ref: string, text: string): Promise<void> {
   const r = parseRef(ref)
+  if (r.kind === 'vault')
+    throw new Error(
+      'Vault environments are not written as files. Use Compare \u2192 Apply, or restore a version from its history.'
+    )
   if (r.kind === 'local') {
     const tmp = join(dirname(r.path), `.${randomBytes(6).toString('hex')}.drift-tmp`)
     const mode = (await stat(r.path).catch(() => null))?.mode
@@ -282,5 +325,6 @@ function finish(
 
 export function scanRoot(root: string): Promise<ScanResult> {
   const r = parseRef(root)
+  if (r.kind === 'vault') return vb().scan(root, r)
   return r.kind === 'ssh' ? scanSsh(root, r.host, r.path) : scanLocal(r.path)
 }

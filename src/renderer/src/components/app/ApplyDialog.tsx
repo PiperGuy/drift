@@ -64,15 +64,24 @@ export function ApplyDialog({
         left: left.path,
         right: right.path,
         keys: [...chosen],
-        expectedMtime: right.modifiedAt
+        expectedMtime: right.modifiedAt,
+        expectedVersion: right.version
       })
       noteWritten(r.written.length)
+      const skippedLine = r.skipped.length
+        ? `Skipped ${r.skipped.map((s) => `${s.key} (${s.reason})`).join(', ')}`
+        : null
       toast.success(
         `Wrote ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${right.rel}`,
         {
-          description: r.skipped.length
-            ? `Skipped ${r.skipped.map((s) => `${s.key} (${s.reason})`).join(', ')}`
-            : 'Snapshot taken first. Roll back from History.'
+          description: r.version
+            ? [
+                `Vault v${r.version.base} → v${r.version.next}${r.verified ? ' · verified by read-back' : ' · read-back could not verify'}`,
+                skippedLine
+              ]
+                .filter(Boolean)
+                .join(' — ')
+            : (skippedLine ?? 'Snapshot taken first. Roll back from History.')
         }
       )
       onOpenChange(false)

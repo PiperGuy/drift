@@ -53,8 +53,27 @@ const MIGRATIONS: string[] = [
   `CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
    INSERT INTO workspaces (name, created_at) VALUES ('Default', strftime('%s','now') * 1000);
    ALTER TABLE roots ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
-   INSERT OR IGNORE INTO meta (key, value) VALUES ('active_workspace', '1');`
+   INSERT OR IGNORE INTO meta (key, value) VALUES ('active_workspace', '1');`,
+  // v5: provider connections (docs/system-design.md §3.1). config_json is non-secret;
+  // secret_blob is safeStorage-sealed or NULL for session-only connections.
+  `CREATE TABLE connections (
+     id INTEGER PRIMARY KEY,
+     provider TEXT NOT NULL,
+     label TEXT NOT NULL,
+     config_json TEXT NOT NULL,
+     secret_blob BLOB,
+     created_at INTEGER NOT NULL,
+     last_used_at INTEGER
+   );`
 ]
+
+export type ConnectionRow = {
+  id: number
+  provider: string
+  label: string
+  config: Record<string, unknown>
+  secretBlob: Buffer | null
+}
 
 export type Store = ReturnType<typeof openStore>
 
@@ -80,6 +99,16 @@ export function openStore(file: string): {
   saveSnapshot: (s: Omit<Snapshot, 'id' | 'restorable'> & { blob: Buffer | null }) => number
   listSnapshots: (limit?: number) => Snapshot[]
   snapshotBlob: (id: number) => { path: string; blob: Buffer | null } | null
+  addConnection: (
+    provider: string,
+    label: string,
+    config: Record<string, unknown>,
+    secretBlob: Buffer | null
+  ) => number
+  getConnection: (id: number) => ConnectionRow | null
+  updateConnectionSecret: (id: number, secretBlob: Buffer | null) => void
+  deleteConnection: (id: number) => void
+  touchConnection: (id: number) => void
   close: () => void
 } {
   const db = new DatabaseSync(file)
@@ -125,7 +154,16 @@ export function openStore(file: string): {
     listSnapshots: db.prepare(
       'SELECT id, path, at, reason, mtime, size, keys_json, blob IS NOT NULL AS restorable FROM file_history ORDER BY at DESC, id DESC LIMIT ?'
     ),
-    snapshotBlob: db.prepare('SELECT path, blob FROM file_history WHERE id = ?')
+    snapshotBlob: db.prepare('SELECT path, blob FROM file_history WHERE id = ?'),
+    insertConnection: db.prepare(
+      'INSERT INTO connections (provider, label, config_json, secret_blob, created_at) VALUES (?, ?, ?, ?, ?)'
+    ),
+    getConnection: db.prepare(
+      'SELECT id, provider, label, config_json, secret_blob FROM connections WHERE id = ?'
+    ),
+    updateConnectionSecret: db.prepare('UPDATE connections SET secret_blob = ? WHERE id = ?'),
+    deleteConnection: db.prepare('DELETE FROM connections WHERE id = ?'),
+    touchConnection: db.prepare('UPDATE connections SET last_used_at = ? WHERE id = ?')
   }
 
   const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
@@ -209,6 +247,33 @@ export function openStore(file: string): {
       const r = q.snapshotBlob.get(id) as { path: string; blob: Uint8Array | null } | undefined
       return r ? { path: r.path, blob: r.blob ? Buffer.from(r.blob) : null } : null
     },
+    addConnection: (provider, label, config, secretBlob) =>
+      Number(
+        q.insertConnection.run(provider, label, JSON.stringify(config), secretBlob, Date.now())
+          .lastInsertRowid
+      ),
+    getConnection: (id) => {
+      const r = q.getConnection.get(id) as
+        | {
+            id: number
+            provider: string
+            label: string
+            config_json: string
+            secret_blob: Uint8Array | null
+          }
+        | undefined
+      if (!r) return null
+      return {
+        id: Number(r.id),
+        provider: r.provider,
+        label: r.label,
+        config: JSON.parse(r.config_json),
+        secretBlob: r.secret_blob ? Buffer.from(r.secret_blob) : null
+      }
+    },
+    updateConnectionSecret: (id, secretBlob) => void q.updateConnectionSecret.run(secretBlob, id),
+    deleteConnection: (id) => void q.deleteConnection.run(id),
+    touchConnection: (id) => void q.touchConnection.run(Date.now(), id),
     close: () => db.close()
   }
 }

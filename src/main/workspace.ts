@@ -10,9 +10,11 @@ const granted = new Set<string>()
 
 const norm = (root: string): string => {
   if (!isRemote(root)) return resolve(root)
-  const r = parseRef(root) as { host: string; path: string }
+  const r = parseRef(root)
+  if (r.kind === 'vault') return root.replace(/\/+$/, '')
+  const s = r as { host: string; path: string }
   // `/` stays `/`; anything else loses trailing slashes.
-  return sshRef(r.host, r.path.replace(/\/+$/, '') || '/')
+  return sshRef(s.host, s.path.replace(/\/+$/, '') || '/')
 }
 
 export function grantRoot(root: string): void {

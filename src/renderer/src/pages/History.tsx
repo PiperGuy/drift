@@ -33,6 +33,7 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   mcp_install: { icon: Bot, label: 'MCP added', tone: 'text-lemon-ink bg-lemon-soft' },
   mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' },
   reveal: { icon: Eye, label: 'Revealed', tone: 'text-bad bg-bad-soft' },
+  connection: { icon: KeyRound, label: 'Connection', tone: 'text-lemon-ink bg-lemon-soft' },
   apply: { icon: PenLine, label: 'Wrote', tone: 'text-lemon-ink bg-lemon-soft' },
   rollback: { icon: Undo2, label: 'Rolled back', tone: 'text-warn bg-warn-soft' },
   format: { icon: Sparkles, label: 'Formatted', tone: 'text-lemon-ink bg-lemon-soft' },
@@ -85,6 +86,8 @@ function describe(e: HistoryEvent): string {
       const w = (e.detail['written'] as string[] | undefined) ?? []
       return `${base(e.subject['path'])} · ${w.join(', ')}`
     }
+    case 'connection':
+      return `${e.subject['action'] ?? ''} ${base(e.subject['root'])}`
   }
 }
 

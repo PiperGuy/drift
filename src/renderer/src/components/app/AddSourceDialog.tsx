@@ -78,8 +78,8 @@ const SOURCES: Source[] = [
     id: 'vault',
     label: 'HashiCorp Vault',
     icon: Vault,
-    blurb: 'KV v2 paths as environments. Token sealed by the OS keyring.',
-    available: false
+    blurb: 'KV v2 secrets as environments, with version history. Writes are check-and-set guarded.',
+    available: true
   },
   {
     id: 'secretsmanager',
@@ -113,6 +113,13 @@ function Field({
 
 /** Split ssh://user@host/path into the dialog's fields. */
 function fromRoot(path: string | null | undefined): { kind: SourceId; f: Record<string, string> } {
+  const v = path ? /^vault:\/\/\d+\/([^/]+)\/(.+)$/.exec(path) : null
+  if (v)
+    // Address and credentials are not recoverable from the root; re-enter to reconnect.
+    return {
+      kind: 'vault',
+      f: { vpath: `${decodeURIComponent(v[1])}/${v[2]}`, user: 'ubuntu', region: 'us-east-1' }
+    }
   const m = path ? /^ssh:\/\/([^/]+)(\/.*)$/.exec(path) : null
   if (m) return { kind: 'ssh', f: { host: m[1], path: m[2], user: 'ubuntu', region: 'us-east-1' } }
   return { kind: 'local', f: { path: '/', user: 'ubuntu', region: 'us-east-1' } }
@@ -154,6 +161,24 @@ export function AddSourceDialog({
         host: `${f['user']?.trim() || 'ubuntu'}@${f['host']?.trim() ?? ''}`,
         path: f['path']?.trim() || '/'
       }
+    if (kind === 'vault')
+      return {
+        kind: 'vault',
+        name,
+        address: f['addr']?.trim() ?? '',
+        namespace: f['ns']?.trim() || undefined,
+        caPem: f['ca']?.trim() || undefined,
+        path: f['vpath']?.trim() ?? '',
+        auth:
+          (f['auth'] ?? 'token') === 'approle'
+            ? {
+                kind: 'approle',
+                roleId: f['roleId']?.trim() ?? '',
+                secretId: f['secretId'] ?? ''
+              }
+            : { kind: 'token', token: f['token'] ?? '' },
+        storage: f['keep'] === '1' ? 'keychain' : 'session'
+      }
     return { kind: 'local', name }
   }
 
@@ -179,7 +204,13 @@ export function AddSourceDialog({
     kind === 'local' ||
     ((kind === 'ssh' || kind === 'ec2') &&
       Boolean(f['host']?.trim()) &&
-      (f['path'] ?? '').startsWith('/'))
+      (f['path'] ?? '').startsWith('/')) ||
+    (kind === 'vault' &&
+      /^https?:\/\//.test(f['addr']?.trim() ?? '') &&
+      Boolean(f['vpath']?.trim()) &&
+      ((f['auth'] ?? 'token') === 'approle'
+        ? Boolean(f['roleId']?.trim()) && Boolean(f['secretId'])
+        : Boolean(f['token'])))
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -426,41 +457,133 @@ export function AddSourceDialog({
               )}
               {kind === 'vault' && (
                 <>
-                  <Field label="Address">
+                  <Field
+                    label="Address"
+                    hint="Same as VAULT_ADDR. https:// — plain http only for a local Vault Proxy."
+                  >
                     <Input
                       value={f['addr'] ?? ''}
                       onChange={(e) => set('addr', e.target.value)}
                       placeholder="https://vault.example.com:8200"
                       className="h-8 font-mono text-xs"
+                      spellCheck={false}
+                      autoComplete="off"
+                      autoFocus
                     />
                   </Field>
-                  <Field label="Namespace" hint="Enterprise / HCP only; leave empty otherwise.">
+                  <Field
+                    label="Namespace"
+                    hint='Enterprise / HCP only. HCP Vault Dedicated: usually "admin".'
+                  >
                     <Input
                       value={f['ns'] ?? ''}
                       onChange={(e) => set('ns', e.target.value)}
                       className="h-8 font-mono text-xs"
+                      spellCheck={false}
+                      autoComplete="off"
                     />
                   </Field>
-                  <Field label="KV v2 mount and path" hint="Each path becomes an environment.">
+                  <Field
+                    label="KV v2 path (mount included)"
+                    hint="A secret document becomes one environment; point at a folder and each secret inside becomes one."
+                  >
                     <Input
                       value={f['vpath'] ?? ''}
                       onChange={(e) => set('vpath', e.target.value)}
                       placeholder="secret/apps/api"
                       className="h-8 font-mono text-xs"
-                    />
-                  </Field>
-                  <Field
-                    label="Token"
-                    hint="Sealed by the OS keyring, only if you opt in. Never written in the clear."
-                  >
-                    <Input
-                      type="password"
-                      value={f['token'] ?? ''}
-                      onChange={(e) => set('token', e.target.value)}
-                      className="h-8 font-mono text-xs"
+                      spellCheck={false}
                       autoComplete="off"
                     />
                   </Field>
+                  <div
+                    className="inline-flex rounded-md border p-0.5"
+                    role="tablist"
+                    aria-label="Authentication"
+                  >
+                    {(['token', 'approle'] as const).map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        role="tab"
+                        aria-selected={(f['auth'] ?? 'token') === a}
+                        onClick={() => set('auth', a)}
+                        className={cn(
+                          'h-6 rounded-sm px-2.5 text-[11px] uppercase transition-colors duration-(--duration-fast)',
+                          (f['auth'] ?? 'token') === a
+                            ? 'bg-accent font-medium'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {a === 'token' ? 'Token' : 'AppRole'}
+                      </button>
+                    ))}
+                  </div>
+                  {(f['auth'] ?? 'token') === 'token' ? (
+                    <Field
+                      label="Token"
+                      hint="From `vault login` or your admin. A wrapping token is unwrapped once. Never written unencrypted."
+                    >
+                      <Input
+                        type="password"
+                        value={f['token'] ?? ''}
+                        onChange={(e) => set('token', e.target.value)}
+                        className="h-8 font-mono text-xs"
+                        autoComplete="off"
+                      />
+                    </Field>
+                  ) : (
+                    <>
+                      <Field label="Role ID">
+                        <Input
+                          value={f['roleId'] ?? ''}
+                          onChange={(e) => set('roleId', e.target.value)}
+                          className="h-8 font-mono text-xs"
+                          spellCheck={false}
+                          autoComplete="off"
+                        />
+                      </Field>
+                      <Field
+                        label="Secret ID"
+                        hint="Used once to log in, then discarded. AppRole is designed for machines: each login consumes a secret_id use, and CIDR-bound roles fail from a laptop that changes networks."
+                      >
+                        <Input
+                          type="password"
+                          value={f['secretId'] ?? ''}
+                          onChange={(e) => set('secretId', e.target.value)}
+                          className="h-8 font-mono text-xs"
+                          autoComplete="off"
+                        />
+                      </Field>
+                    </>
+                  )}
+                  <Field
+                    label="CA certificate (optional)"
+                    hint="PEM bundle for self-signed clusters. Not a secret."
+                  >
+                    <textarea
+                      value={f['ca'] ?? ''}
+                      onChange={(e) => set('ca', e.target.value)}
+                      placeholder="-----BEGIN CERTIFICATE-----"
+                      rows={2}
+                      spellCheck={false}
+                      className="w-full rounded-md border bg-transparent px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </Field>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      className="accent-(--lemon-ink)"
+                      checked={f['keep'] === '1'}
+                      onChange={(e) => set('keep', e.target.checked ? '1' : '')}
+                    />
+                    Save the token in the OS keyring (unticked: kept for this session only)
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Connect checks health, your token, the KV v2 mount and your permissions before
+                    anything is saved. Reads render redacted shapes; every write is a reviewed,
+                    check-and-set-guarded new version.
+                  </p>
                 </>
               )}
               {kind === 'secretsmanager' && (

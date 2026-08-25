@@ -1,4 +1,5 @@
-import { readText, statRef, writeAtomic } from './fs'
+import { parseRef, readText, statRef, writeAtomic } from './fs'
+import { applyVault } from './providers/vault'
 import { safeStorage } from 'electron'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
 import { formatEnv, renderAssignment } from '@shared/env-lint'
@@ -48,6 +49,8 @@ async function snapshot(store: Store, path: string, reason: Snapshot['reason']):
 export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyResult> {
   assertGranted(req.left)
   assertGranted(req.right)
+  // Vault targets are guarded by check-and-set on the version, not by mtime.
+  if (parseRef(req.right).kind === 'vault') return applyVault(store, req)
   const st = await statRef(req.right)
   // Allow sub-millisecond jitter across filesystems, refuse a real change.
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1) {
@@ -84,6 +87,10 @@ export async function formatFile(
   expectedMtime: number
 ): Promise<FormatResult> {
   assertGranted(path)
+  if (parseRef(path).kind === 'vault')
+    throw new Error(
+      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
+    )
   const st = await statRef(path)
   if (Math.abs(st.mtimeMs - expectedMtime) > 1)
     throw new Error(`${path} changed since it was opened. Rescan, then format.`)
@@ -105,6 +112,10 @@ export async function formatFile(
 /** Write user-typed values: update in place or append. Same guards and snapshot as apply. */
 export async function setValues(store: Store, req: SetRequest): Promise<SetResult> {
   assertGranted(req.path)
+  if (parseRef(req.path).kind === 'vault')
+    throw new Error(
+      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
+    )
   const st = await statRef(req.path)
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1)
     throw new Error(`${req.path} changed since it was opened. Rescan, then edit again.`)
@@ -124,6 +135,10 @@ export async function setValues(store: Store, req: SetRequest): Promise<SetResul
 export async function rollback(store: Store, id: number): Promise<void> {
   const s = store.snapshotBlob(id)
   if (!s) throw new Error('Snapshot not found')
+  if (parseRef(s.path).kind === 'vault')
+    throw new Error(
+      'Vault environments roll back from their own version history (open the file \u2192 History), not from file snapshots.'
+    )
   if (!s.blob)
     throw new Error('This snapshot has no content: no keyring was available when it was taken.')
   assertGranted(s.path)

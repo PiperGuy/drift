@@ -44,14 +44,18 @@ export const Channels = {
   envSet: 'env:set',
   envRevealAll: 'env:reveal-all',
   windowFullscreen: 'window:fullscreen',
-  sshHosts: 'ssh:hosts'
+  sshHosts: 'ssh:hosts',
+  vaultConnect: 'vault:connect',
+  vaultHistory: 'vault:history',
+  vaultShapeAt: 'vault:shape-at',
+  vaultRestore: 'vault:restore'
 } as const
 
 /** A source the user switches between: a named set of roots (usually one). `path` is its first root. */
 export type Workspace = { id: number; name: string; roots: number; path: string | null }
 
-/** A granted root: a local folder or ssh://host/path. */
-export type RootInfo = { path: string; kind: 'local' | 'ssh'; label: string }
+/** A granted root: a local folder, ssh://host/path, or vault://conn/mount/path. */
+export type RootInfo = { path: string; kind: 'local' | 'ssh' | 'vault'; label: string }
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
 export type EnvFileInfo = {
@@ -66,6 +70,8 @@ export type EnvFileInfo = {
   project: string | null
   modifiedAt: number
   size: number
+  /** Vault only: the KV v2 version this metadata describes. The CAS base for writes. */
+  version?: number
 }
 
 export type ScanResult = {
@@ -95,6 +101,7 @@ export type HistoryKind =
   | 'rollback'
   | 'format'
   | 'edit'
+  | 'connection'
 export type HistoryEvent = {
   id: number
   at: number
@@ -139,11 +146,82 @@ export type ApplyRequest = {
   keys: string[]
   /** mtime the plan was made against; the write refuses if the file changed since. */
   expectedMtime: number
+  /** Vault targets: the KV v2 version the plan was built from (the CAS base). */
+  expectedVersion?: number
 }
 export type ApplyResult = {
   written: string[]
   skipped: { key: string; reason: string }[]
   snapshot: number
+  /** Vault targets: the version the write moved the secret from and to. */
+  version?: { base: number; next: number }
+  /** Vault targets: the new version was read back and matches the approved plan. */
+  verified?: boolean
+}
+
+/* ---------- HashiCorp Vault KV v2 ---------- */
+
+export type VaultAuth =
+  { kind: 'token'; token: string } | { kind: 'approle'; roleId: string; secretId: string }
+
+/** What the Add source dialog submits. The credential is used in main and never returned. */
+export type VaultSourceSpec = {
+  name: string
+  /** https://host:8200 — plain http only on loopback (e.g. a local Vault Proxy). */
+  address: string
+  /** Enterprise / HCP only. HCP Vault Dedicated: usually "admin". */
+  namespace?: string
+  /** PEM CA bundle for self-signed clusters. Not a secret. */
+  caPem?: string
+  /** Mount and secret path in one, e.g. "secret/apps/api/prod" (leaf) or "secret/apps/api" (folder). */
+  path: string
+  auth: VaultAuth
+  /** 'keychain' seals the resolved token via safeStorage; 'session' keeps it in memory only. */
+  storage: 'session' | 'keychain'
+}
+
+export type VaultTokenInfo = {
+  accessor: string
+  displayName: string
+  policies: string[]
+  expireTime: string | null
+  renewable: boolean
+  type: 'service' | 'batch'
+}
+
+export type VaultPreflight = {
+  vaultVersion: string
+  enterprise: boolean
+  mount: string
+  kind: 'leaf' | 'folder'
+  casRequired: boolean
+  maxVersions: number
+  deleteVersionAfter: string
+  token: VaultTokenInfo
+  capabilities: Record<string, string[]>
+  warnings: string[]
+}
+
+export type VaultConnectResult = { root: RootInfo; preflight: VaultPreflight }
+
+export type VaultVersionMeta = {
+  version: number
+  createdTime: string
+  deletionTime: string | null
+  destroyed: boolean
+  createdBy?: { actor?: string; operation?: string; entityId?: string }
+}
+
+export type VaultHistory = {
+  path: string
+  currentVersion: number
+  /** Versions below this rolled off (max_versions). 0 = nothing rolled off yet. */
+  oldestVersion: number
+  maxVersions: number
+  casRequired: boolean
+  deleteVersionAfter: string
+  updatedTime: string
+  versions: VaultVersionMeta[]
 }
 
 /** A file as it was just before Drift wrote to it (or restored it). Key names only in the clear. */
@@ -243,4 +321,16 @@ export type PlumbrApi = {
   formatEnv: (req: FormatRequest) => Promise<FormatResult>
   /** Update or add keys with typed values, via the snapshot + atomic path. */
   setValues: (req: SetRequest) => Promise<SetResult>
+  /** Preflight + connect a Vault KV v2 source. The credential never comes back. */
+  vaultConnect: (spec: VaultSourceSpec) => Promise<VaultConnectResult>
+  /** Version timeline of one Vault environment (metadata only, no values). */
+  vaultHistory: (path: string) => Promise<VaultHistory>
+  /** Redacted shape of one historical version, fetched on demand. */
+  vaultShapeAt: (req: { path: string; version: number }) => Promise<EnvShape>
+  /** Write vN's data as a new version, CAS-guarded on the current one. */
+  vaultRestore: (req: {
+    path: string
+    version: number
+    expectedVersion: number
+  }) => Promise<ApplyResult>
 }

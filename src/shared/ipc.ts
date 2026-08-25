@@ -24,7 +24,34 @@ export const ApplyRequestSchema = z.object({
   left: z.string().min(1),
   right: z.string().min(1),
   keys: z.array(z.string().min(1)).min(1).max(5000),
-  expectedMtime: z.number()
+  expectedMtime: z.number(),
+  expectedVersion: z.number().int().positive().optional()
+})
+export const VaultSourceSpecSchema = z.object({
+  name: z.string().max(60).default(''),
+  address: z.string().min(1).max(2048),
+  namespace: z.string().max(256).optional(),
+  caPem: z.string().max(65536).optional(),
+  path: z.string().min(1).max(1024),
+  auth: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('token'), token: z.string().min(1).max(4096) }),
+    z.object({
+      kind: z.literal('approle'),
+      roleId: z.string().min(1).max(512),
+      secretId: z.string().min(1).max(4096)
+    })
+  ]),
+  storage: z.enum(['session', 'keychain'])
+})
+export const VaultPathSchema = z.object({ path: z.string().min(1) })
+export const VaultShapeAtSchema = z.object({
+  path: z.string().min(1),
+  version: z.number().int().positive()
+})
+export const VaultRestoreSchema = z.object({
+  path: z.string().min(1),
+  version: z.number().int().positive(),
+  expectedVersion: z.number().int().positive()
 })
 export const ViewRequestSchema = z.object({ path: z.string().min(1) })
 export const FormatRequestSchema = z.object({ path: z.string().min(1), expectedMtime: z.number() })

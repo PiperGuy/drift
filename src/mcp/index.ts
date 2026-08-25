@@ -52,9 +52,16 @@ function roots(): string[] {
       .all(active) as { path: string }[]
     if (rows.length === 0)
       throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)
+    // Vault sources need the app's keyring-held credentials; this process never has
+    // them, so vault:// roots are skipped here by design.
+    const usable = rows.filter((r) => !r.path.startsWith('vault://'))
+    if (usable.length === 0)
+      throw new Error(
+        `The active source is a Vault source, which MCP cannot read (credentials stay in the ${PRODUCT} app). Switch to a folder or SSH source.`
+      )
     revokeRoots()
-    for (const r of rows) grantRoot(r.path)
-    return rows.map((r) => r.path)
+    for (const r of usable) grantRoot(r.path)
+    return usable.map((r) => r.path)
   } finally {
     db.close()
   }
