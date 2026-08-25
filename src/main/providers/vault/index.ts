@@ -364,6 +364,11 @@ export async function connectVault(
   return { root, preflight }
 }
 
+/** Forget in-memory session tokens for removed connections (bulk forget/delete paths). */
+export function dropVaultTokens(connectionIds: number[]): void {
+  for (const id of connectionIds) tokens.delete(id)
+}
+
 export function forgetVaultConnection(store: Store, ref: string): void {
   const r = parseRef(ref)
   if (r.kind !== 'vault') return

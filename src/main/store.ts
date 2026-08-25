@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { parseRef } from './fs'
 import type { DriftReceipt } from '@shared/drift'
 import type { HistoryEvent, HistoryKind, Snapshot, Workspace } from '@shared/channels'
 
@@ -89,9 +90,11 @@ export function openStore(file: string): {
   setActiveWorkspace: (id: number) => void
   createWorkspace: (name: string) => Workspace
   renameWorkspace: (id: number, name: string) => void
-  deleteWorkspace: (id: number) => void
+  /** Also deletes connections referenced by the workspace's vault roots; returns their ids. */
+  deleteWorkspace: (id: number) => number[]
   touchRoot: (path: string) => void
-  forgetAll: () => void
+  /** Wipes roots, receipts, events, snapshots AND provider connections; returns connection ids. */
+  forgetAll: () => number[]
   clearCache: () => void
   saveReceipt: (receipt: DriftReceipt) => number
   logEvent: (kind: HistoryKind, subject: object, detail?: object) => void
@@ -168,6 +171,16 @@ export function openStore(file: string): {
 
   const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
 
+  /** Connection ids referenced by vault:// roots — of one workspace, or of every workspace. */
+  const vaultConnIds = (workspaceId?: number): number[] => {
+    const rows = (
+      workspaceId === undefined
+        ? (db.prepare('SELECT path FROM roots').all() as { path: string }[])
+        : (q.listRoots.all(workspaceId) as { path: string }[])
+    ).map((r) => parseRef(r.path))
+    return rows.flatMap((r) => (r.kind === 'vault' ? [r.connectionId] : []))
+  }
+
   return {
     getMeta: (key) => (q.getMeta.get(key)?.['value'] as string | undefined) ?? null,
     setMeta: (key, value) => void q.setMeta.run(key, value),
@@ -189,15 +202,23 @@ export function openStore(file: string): {
     },
     renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
     deleteWorkspace: (id) => {
+      // A root's credentials must not outlive the root (Codex review P1).
+      const ids = vaultConnIds(id)
+      for (const c of ids) q.deleteConnection.run(c)
       q.deleteWorkspaceRoots.run(id)
       q.deleteWorkspace.run(id)
+      return ids
     },
     touchRoot: (path) => void q.touchRoot.run(Date.now(), path),
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
-    forgetAll: () =>
+    // Connections go too: a sealed token must never outlive "Forget data" (Codex review P1).
+    forgetAll: () => {
+      const ids = vaultConnIds()
       db.exec(
-        'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'
-      ),
+        'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history; DELETE FROM connections;'
+      )
+      return ids
+    },
     clearCache: () =>
       db.exec('DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'),
     saveReceipt: (r) =>

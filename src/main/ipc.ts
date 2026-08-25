@@ -41,6 +41,7 @@ import {
 import { applyPlan, formatFile, rollback, setValues } from './write'
 import {
   connectVault,
+  dropVaultTokens,
   forgetVaultConnection,
   registerVault,
   vaultHistory,
@@ -266,7 +267,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const all = store.listWorkspaces()
     if (all.length <= 1) throw new Error('Keep at least one workspace')
     const name = all.find((w) => w.id === id)?.name
-    store.deleteWorkspace(id)
+    dropVaultTokens(store.deleteWorkspace(id))
     if (store.activeWorkspace() === id) store.setActiveWorkspace(all.find((w) => w.id !== id)!.id)
     store.logEvent('workspace', { action: 'delete', name })
     grantActive()
@@ -298,7 +299,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.dataForget, () => {
     assertUnlocked(store)
     revokeRoots()
-    store.forgetAll()
+    dropVaultTokens(store.forgetAll())
     store.logEvent('forget', {})
   })
 

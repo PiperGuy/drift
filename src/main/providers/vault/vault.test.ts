@@ -228,6 +228,7 @@ test('connect: preflight, folder root, sealed keychain token, scan lists leaves 
   assert.ok(conn!.secretBlob && conn!.secretBlob.toString().includes(TOKEN)) // reversible mock seal
 
   grantRoot(root)
+  store.rememberRoot(root, r.label) // what the vaultConnect IPC handler does
   const { scanRoot } = await import('../../fs')
   const scan = await scanRoot(root)
   assert.deepEqual(
@@ -347,4 +348,23 @@ test('file-style writes are refused for vault refs', async () => {
   const snapId = store.listSnapshots().find((s) => s.path === prodPath)?.id
   assert.ok(snapId)
   await assert.rejects(rollback(store, snapId!), /version history/)
+})
+
+test('forget-data and workspace deletion drop vault connections with their roots', () => {
+  // A second workspace with its own vault source.
+  const w = store.createWorkspace('Client Y')
+  store.setActiveWorkspace(w.id)
+  const cid = store.addConnection('vault', 'y', { address: 'https://x' }, Buffer.from('sealed:x'))
+  store.rememberRoot(vaultRef(cid, 'secret', 'apps/y'))
+  assert.ok(store.getConnection(cid))
+  assert.deepEqual(store.deleteWorkspace(w.id), [cid])
+  assert.equal(store.getConnection(cid), null) // credential gone with the workspace
+  store.setActiveWorkspace(1)
+
+  // Forget data wipes every remaining connection too.
+  const prodConn = (parseRef(root) as { connectionId: number }).connectionId
+  assert.ok(store.getConnection(prodConn))
+  const ids = store.forgetAll()
+  assert.ok(ids.includes(prodConn))
+  assert.equal(store.getConnection(prodConn), null)
 })
