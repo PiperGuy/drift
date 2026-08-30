@@ -44,5 +44,5 @@ npmRebuild: false
 publish:
   provider: github
   owner: PiperGuy
-  repo: plumbr-env-desktop
+  repo: drift
   releaseType: draft

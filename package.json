@@ -1,5 +1,5 @@
 {
-  "name": "plumbr-env-desktop",
+  "name": "drift",
   "productName": "Drift",
   "version": "0.1.0",
   "description": "Drift by Plumbr, desktop app. Local-first .env discovery, redacted drift receipts and human-approved sync.",
