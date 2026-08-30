@@ -42,7 +42,7 @@ jobs:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
-          name: plumbr-env-${{ matrix.os }}
+          name: drift-${{ matrix.os }}
           path: |
             dist/*.AppImage
             dist/*.deb

@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useWorkspace } from '@/store/workspace'
+import { VaultGuide } from '@/components/app/VaultGuide'
 import { cn } from '@/lib/utils'
 
 /**
@@ -214,44 +215,49 @@ export function AddSourceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="p-0 sm:max-w-3xl">
-        <div className="grid grid-cols-[14rem_1fr]">
-          <aside className="border-r bg-sidebar p-2" aria-label="Source types">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[minmax(0,1fr)] overflow-hidden p-0 sm:max-w-3xl">
+        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[13rem_minmax(0,1fr)] sm:grid-rows-[minmax(0,1fr)]">
+          <aside
+            className="min-w-0 border-b bg-sidebar p-2 sm:overflow-y-auto sm:border-r sm:border-b-0"
+            aria-label="Source types"
+          >
             <p className="px-2 pt-1 pb-2 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
               {mode === 'edit' ? 'Update source' : 'Add a source'}
             </p>
-            {SOURCES.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                aria-current={kind === s.id ? 'true' : undefined}
-                onClick={() => {
-                  setKind(s.id)
-                  setError(null)
-                }}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-(--duration-fast)',
-                  kind === s.id
-                    ? 'bg-sidebar-accent font-medium'
-                    : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
-                )}
-              >
-                <s.icon
-                  className={cn('size-4 shrink-0', kind === s.id && 'text-lemon-ink')}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1 truncate">{s.label}</span>
-                {!s.available && (
-                  <span className="font-mono text-[9px] tracking-wide text-muted-foreground uppercase">
-                    soon
-                  </span>
-                )}
-              </button>
-            ))}
+            <div className="flex gap-1 overflow-x-auto pb-1 sm:block sm:space-y-0 sm:pb-0">
+              {SOURCES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-current={kind === s.id ? 'true' : undefined}
+                  onClick={() => {
+                    setKind(s.id)
+                    setError(null)
+                  }}
+                  className={cn(
+                    'flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] whitespace-nowrap transition-colors duration-(--duration-fast) sm:w-full sm:whitespace-normal',
+                    kind === s.id
+                      ? 'bg-sidebar-accent font-medium'
+                      : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
+                  )}
+                >
+                  <s.icon
+                    className={cn('size-4 shrink-0', kind === s.id && 'text-lemon-ink')}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                  {!s.available && (
+                    <span className="font-mono text-[9px] tracking-wide text-muted-foreground uppercase">
+                      soon
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </aside>
 
           <form
-            className="p-5"
+            className="@container min-h-0 overflow-y-auto p-5"
             onSubmit={(e) => {
               e.preventDefault()
               if (ready && src.available) void connect()
@@ -260,6 +266,7 @@ export function AddSourceDialog({
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <src.icon className="size-4 text-lemon-ink" /> {src.label}
+                {kind === 'vault' && <VaultGuide className="-my-1" />}
                 {!src.available && (
                   <span className="rounded-sm border border-warn/30 bg-warn-soft px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-warn uppercase">
                     coming soon
@@ -457,32 +464,34 @@ export function AddSourceDialog({
               )}
               {kind === 'vault' && (
                 <>
-                  <Field
-                    label="Address"
-                    hint="Same as VAULT_ADDR. https:// — plain http only for a local Vault Proxy."
-                  >
-                    <Input
-                      value={f['addr'] ?? ''}
-                      onChange={(e) => set('addr', e.target.value)}
-                      placeholder="https://vault.example.com:8200"
-                      className="h-8 font-mono text-xs"
-                      spellCheck={false}
-                      autoComplete="off"
-                      autoFocus
-                    />
-                  </Field>
-                  <Field
-                    label="Namespace"
-                    hint='Enterprise / HCP only. HCP Vault Dedicated: usually "admin".'
-                  >
-                    <Input
-                      value={f['ns'] ?? ''}
-                      onChange={(e) => set('ns', e.target.value)}
-                      className="h-8 font-mono text-xs"
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  </Field>
+                  <div className="grid gap-3 @lg:grid-cols-[3fr_2fr]">
+                    <Field
+                      label="Address"
+                      hint="Same as VAULT_ADDR. https:// — plain http only for a local Vault Proxy."
+                    >
+                      <Input
+                        value={f['addr'] ?? ''}
+                        onChange={(e) => set('addr', e.target.value)}
+                        placeholder="https://vault.example.com:8200"
+                        className="h-8 font-mono text-xs"
+                        spellCheck={false}
+                        autoComplete="off"
+                        autoFocus
+                      />
+                    </Field>
+                    <Field
+                      label="Namespace"
+                      hint='Enterprise / HCP only. HCP Vault Dedicated: usually "admin".'
+                    >
+                      <Input
+                        value={f['ns'] ?? ''}
+                        onChange={(e) => set('ns', e.target.value)}
+                        className="h-8 font-mono text-xs"
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                    </Field>
+                  </div>
                   <Field
                     label="KV v2 path (mount included)"
                     hint="A secret document becomes one environment; point at a folder and each secret inside becomes one."
@@ -533,7 +542,7 @@ export function AddSourceDialog({
                       />
                     </Field>
                   ) : (
-                    <>
+                    <div className="grid gap-3 @lg:grid-cols-2">
                       <Field label="Role ID">
                         <Input
                           value={f['roleId'] ?? ''}
@@ -555,7 +564,7 @@ export function AddSourceDialog({
                           autoComplete="off"
                         />
                       </Field>
-                    </>
+                    </div>
                   )}
                   <Field
                     label="CA certificate (optional)"
@@ -567,7 +576,7 @@ export function AddSourceDialog({
                       placeholder="-----BEGIN CERTIFICATE-----"
                       rows={2}
                       spellCheck={false}
-                      className="w-full rounded-md border bg-transparent px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="w-full min-w-0 resize-y rounded-md border bg-transparent px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </Field>
                   <label className="flex items-center gap-2 text-xs">
