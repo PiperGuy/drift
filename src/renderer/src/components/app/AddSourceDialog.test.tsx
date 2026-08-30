@@ -20,13 +20,16 @@ function openVault(): void {
 
 const guideButton = (): HTMLElement => screen.getByRole('button', { name: VAULT_GUIDE_LABEL })
 const guide = (): HTMLElement | null => screen.queryByRole('dialog', { name: VAULT_GUIDE_LABEL })
-const closed = (): Promise<void> => waitFor(() => assert.equal(guide(), null))
+// Never hand a DOM node to assert.equal: on failure node:assert inspects it with
+// depth 1000, and a React-rendered node's fiber links make that walk effectively
+// endless, hanging the worker (CI OOM). waitFor fails every poll until closed.
+const closed = (): Promise<void> => waitFor(() => assert.ok(!guide()))
 
 test('vault guide: hover and keyboard focus reveal it, leaving hides it', async () => {
   openVault()
   const btn = guideButton()
   assert.equal(btn.getAttribute('aria-expanded'), 'false')
-  assert.equal(guide(), null)
+  assert.ok(!guide())
 
   fireEvent.pointerEnter(btn)
   assert.ok(guide())
@@ -107,5 +110,5 @@ test('add source: shell scrolls instead of overflowing, every source type stays 
   ]
   for (const n of names) assert.ok(screen.getByRole('button', { name: new RegExp(`^${n}`) }), n)
   // No guide outside the Vault form.
-  assert.equal(screen.queryByRole('button', { name: VAULT_GUIDE_LABEL }), null)
+  assert.ok(!screen.queryByRole('button', { name: VAULT_GUIDE_LABEL }))
 })
