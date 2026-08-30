@@ -177,7 +177,7 @@ test('workspace: onboarding, then grouped overview with redacted key counts', as
 
   // Nothing selected: no compare bar. Rows are buttons that open the file; compare is picked
   // from the row's context menu (exercised via the store here; Radix menus need a real pointer).
-  assert.equal(screen.queryByRole('button', { name: /^Compare/ }), null)
+  assert.ok(!screen.queryByRole('button', { name: /^Compare/ }))
   assert.ok(screen.getByRole('button', { name: 'Open api/.env' }))
   const [envA, envB] = scan.files
   act(() => useWorkspace.getState().pick('left', envA))
@@ -258,7 +258,7 @@ test('receipt: empty state, then classes, filters, search and a plan with no app
   assert.equal(plumbr.applyPlan.mock.calls.length, 0)
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
   fireEvent.click(screen.getByRole('tab', { name: /Receipt · / }))
-  assert.equal(screen.queryByRole('button', { name: /Apply to B/ }), null)
+  assert.ok(!screen.queryByRole('button', { name: /Apply to B/ }))
 
   // Swapping direction clears the receipt and recomputes it.
   fireEvent.click(screen.getByRole('button', { name: 'Swap A and B' }))
