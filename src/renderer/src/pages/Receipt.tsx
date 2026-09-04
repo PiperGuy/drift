@@ -11,6 +11,7 @@ import {
 } from '@shared/receipt-view'
 import { StatusBadge } from '@/components/app/StatusBadge'
 import { STATUS_META } from '@/lib/status'
+import { isReadOnlyPath } from '@/lib/sources'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DEFAULT_IGNORE, useWorkspace } from '@/store/workspace'
@@ -76,7 +77,11 @@ export function ReceiptPage(): React.JSX.Element {
   if (!left || !right) return <Empty onWorkspace={() => setPage('workspace')} />
 
   const review = receipt
-    ? receipt.counts.changed + receipt.counts.missing + receipt.counts.extra + receipt.counts.blank
+    ? receipt.counts.changed +
+      receipt.counts.missing +
+      receipt.counts.extra +
+      receipt.counts.blank +
+      receipt.counts.unknown
     : 0
 
   return (
@@ -224,7 +229,17 @@ export function ReceiptPage(): React.JSX.Element {
               )}
             </div>
             {tab === 'plan' && plan.some((a) => a.op !== 'keep') && (
-              <Button size="sm" className="press h-7 text-xs" onClick={() => setApplying(true)}>
+              <Button
+                size="sm"
+                className="press h-7 text-xs"
+                onClick={() => setApplying(true)}
+                disabled={isReadOnlyPath(right.path)}
+                title={
+                  isReadOnlyPath(right.path)
+                    ? 'B is a read-only provider source: change values in the provider itself. Swap sides to apply into a file.'
+                    : undefined
+                }
+              >
                 <PenLine /> Apply to B…
               </Button>
             )}

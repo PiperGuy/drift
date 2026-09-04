@@ -48,14 +48,43 @@ export const Channels = {
   vaultConnect: 'vault:connect',
   vaultHistory: 'vault:history',
   vaultShapeAt: 'vault:shape-at',
-  vaultRestore: 'vault:restore'
+  vaultRestore: 'vault:restore',
+  providerConnect: 'provider:connect',
+  workspaceAddDocker: 'workspace:add-docker',
+  dockerContainers: 'docker:containers',
+  awsProfiles: 'aws:profiles',
+  ecsDiscover: 'ecs:discover'
 } as const
 
 /** A source the user switches between: a named set of roots (usually one). `path` is its first root. */
 export type Workspace = { id: number; name: string; roots: number; path: string | null }
 
-/** A granted root: a local folder, ssh://host/path, or vault://conn/mount/path. */
-export type RootInfo = { path: string; kind: 'local' | 'ssh' | 'vault'; label: string }
+/**
+ * Read-only API providers. Each is `<id>://<connectionId>/<target>` as a root and
+ * file ref; the adapter lives in src/main/providers/<id>. Reads only: no remote
+ * write path exists for these, and the MCP server cannot read them.
+ */
+export const PROVIDERS = [
+  'ecs',
+  'aws-sm',
+  'vercel',
+  'github',
+  'railway',
+  'render',
+  'dokploy',
+  'coolify'
+] as const
+export type ProviderId = (typeof PROVIDERS)[number]
+
+/** A granted root: a local folder, ssh://host/path, docker://host/container/path, vault://…, or a provider ref. */
+export type RootKind = 'local' | 'ssh' | 'docker' | 'vault' | ProviderId
+export type RootInfo = {
+  path: string
+  kind: RootKind
+  label: string
+  /** aws-sm only: the path is a `prefix/` (folder of secrets), not one secret. Refs cannot carry the slash. */
+  prefix?: true
+}
 
 /** Discovered file. Metadata only. Contents are not opened during a scan. */
 export type EnvFileInfo = {
@@ -224,6 +253,93 @@ export type VaultHistory = {
   versions: VaultVersionMeta[]
 }
 
+/* ---------- Read-only API providers, Docker, AWS ---------- */
+
+export type ProviderStorage = 'session' | 'keychain'
+
+/**
+ * What the Add source dialog submits for a provider. Tokens are used in main and
+ * never returned; AWS entries carry no credential at all (the SDK credential
+ * chain — profiles, SSO, env — is used, and only region + profile are stored).
+ */
+export type ProviderConnectSpec =
+  | {
+      provider: 'vercel'
+      name: string
+      token: string
+      /** Team-owned projects need the team id (team_…) or slug. */
+      teamId?: string
+      /** Project id (prj_…) or name. */
+      project: string
+      storage: ProviderStorage
+    }
+  | {
+      provider: 'github'
+      name: string
+      token: string
+      owner: string
+      /** Empty = organization-level secrets and variables. */
+      repo?: string
+      storage: ProviderStorage
+    }
+  | { provider: 'railway'; name: string; token: string; project: string; storage: ProviderStorage }
+  | { provider: 'render'; name: string; token: string; storage: ProviderStorage }
+  | {
+      provider: 'dokploy'
+      name: string
+      token: string
+      address: string
+      caPem?: string
+      storage: ProviderStorage
+    }
+  | {
+      provider: 'coolify'
+      name: string
+      token: string
+      address: string
+      caPem?: string
+      storage: ProviderStorage
+    }
+  | {
+      provider: 'aws-sm'
+      name: string
+      region: string
+      profile?: string
+      /** One secret name, or a name prefix ending in `/` for a folder of secrets. */
+      secret: string
+    }
+  | {
+      provider: 'ecs'
+      name: string
+      region: string
+      profile?: string
+      cluster: string
+      /** `service:<name>` (recommended: survives deployments) or `task:<id>`. */
+      selector: string
+      container: string
+      /**
+       * Empty: read the task definition's environment through the API (no command
+       * runs). A directory: read files inside the running container with ECS Exec.
+       */
+      path?: string
+    }
+
+export type ProviderConnectResult = {
+  root: RootInfo
+  /** One line for the toast: what was found. */
+  summary: string
+  warnings: string[]
+}
+
+export type DockerSourceSpec = { host?: string; container: string; path: string }
+
+export type EcsDiscoverRequest = { region: string; profile?: string; cluster?: string }
+export type EcsDiscovery = {
+  clusters: string[]
+  services: { name: string; taskDefinition: string; running: number; containers: string[] }[]
+  tasks: { id: string; family: string; lastStatus: string; containers: string[] }[]
+}
+
 /** A file as it was just before Drift wrote to it (or restored it). Key names only in the clear. */
 export type Snapshot = {
   id: number
@@ -333,4 +449,14 @@ export type PlumbrApi = {
     version: number
     expectedVersion: number
   }) => Promise<ApplyResult>
+  /** Preflight + connect a read-only provider source. Tokens never come back. */
+  providerConnect: (spec: ProviderConnectSpec) => Promise<ProviderConnectResult>
+  /** Verify with `docker exec`, then grant and remember a container directory. */
+  addDockerRoot: (req: DockerSourceSpec) => Promise<RootInfo>
+  /** Running container names on the local daemon or an ssh://host daemon. */
+  dockerContainers: (host?: string) => Promise<string[]>
+  /** Profile names from ~/.aws/config and ~/.aws/credentials. Names only. */
+  awsProfiles: () => Promise<string[]>
+  /** Clusters, or one cluster's services and running tasks with their containers. */
+  ecsDiscover: (req: EcsDiscoverRequest) => Promise<EcsDiscovery>
 }

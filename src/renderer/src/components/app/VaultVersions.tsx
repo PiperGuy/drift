@@ -204,7 +204,7 @@ export function VaultVersions({
                   v{receipt.version} → current ·{' '}
                   {receipt.receipt.clean
                     ? 'identical'
-                    : `${receipt.receipt.counts.changed} changed · ${receipt.receipt.counts.missing} removed since · ${receipt.receipt.counts.extra} added since · ${receipt.receipt.counts.blank} blank`}
+                    : `${receipt.receipt.counts.changed} changed · ${receipt.receipt.counts.missing} removed since · ${receipt.receipt.counts.extra} added since · ${receipt.receipt.counts.blank} blank${receipt.receipt.counts.unknown ? ` · ${receipt.receipt.counts.unknown} unknown` : ''}`}
                 </p>
                 <ul className="max-h-40 divide-y overflow-auto">
                   {receipt.receipt.rows

@@ -46,6 +46,11 @@ const plumbr: PlumbrApi = {
   vaultHistory: (path) => ipcRenderer.invoke(Channels.vaultHistory, path),
   vaultShapeAt: (req) => ipcRenderer.invoke(Channels.vaultShapeAt, req),
   vaultRestore: (req) => ipcRenderer.invoke(Channels.vaultRestore, req),
+  providerConnect: (spec) => ipcRenderer.invoke(Channels.providerConnect, spec),
+  addDockerRoot: (req) => ipcRenderer.invoke(Channels.workspaceAddDocker, req),
+  dockerContainers: (host) => ipcRenderer.invoke(Channels.dockerContainers, host),
+  awsProfiles: () => ipcRenderer.invoke(Channels.awsProfiles),
+  ecsDiscover: (req) => ipcRenderer.invoke(Channels.ecsDiscover, req),
   onFullscreen: (cb) => {
     const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
     ipcRenderer.on(Channels.windowFullscreen, h)

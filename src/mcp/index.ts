@@ -17,7 +17,7 @@ import { planSync } from '@shared/drift'
 import { PRODUCT } from '@shared/product'
 import { licenseState } from '@shared/license'
 import { grantRoot, revokeRoots, scanWorkspace } from '../main/workspace'
-import { joinRef } from '../main/fs'
+import { joinRef, parseRef } from '../main/fs'
 import { compareFiles, envShape } from '../main/env'
 
 const dbArg = process.argv.indexOf('--db')
@@ -52,12 +52,12 @@ function roots(): string[] {
       .all(active) as { path: string }[]
     if (rows.length === 0)
       throw new Error(`No workspace granted yet. Open ${PRODUCT} and choose a folder.`)
-    // Vault sources need the app's keyring-held credentials; this process never has
-    // them, so vault:// roots are skipped here by design.
-    const usable = rows.filter((r) => !r.path.startsWith('vault://'))
+    // Vault and provider sources need the app's keyring-held credentials; this
+    // process never has them, so those roots are skipped here by design.
+    const usable = rows.filter((r) => ['local', 'ssh', 'docker'].includes(parseRef(r.path).kind))
     if (usable.length === 0)
       throw new Error(
-        `The active source is a Vault source, which MCP cannot read (credentials stay in the ${PRODUCT} app). Switch to a folder or SSH source.`
+        `The active source is a Vault or platform source, which MCP cannot read (credentials stay in the ${PRODUCT} app). Switch to a folder, SSH or Docker source.`
       )
     revokeRoots()
     for (const r of usable) grantRoot(r.path)

@@ -4,7 +4,7 @@ import {
   registerVaultBackend,
   vaultRef,
   parseRef,
-  readText,
+  readEnv,
   type VaultRef,
   type Stat
 } from '../../fs'
@@ -455,7 +455,7 @@ export async function applyVault(store: Store, req: ApplyRequest): Promise<Apply
   if (cur.kind !== 'ok') throw new Error(deletedMessage(r, cur.kind, cur.meta.version))
   if (cur.version !== req.expectedVersion) throw new Error(CHANGED(req.right))
 
-  const leftText = await readText(req.left)
+  const { text: leftText, opaque } = await readEnv(req.left)
   const leftValues = new Map(parseEnv(leftText).map((e) => [e.key, e.value]))
   const written: string[] = []
   const skipped: ApplyResult['skipped'] = []
@@ -464,6 +464,7 @@ export async function applyVault(store: Store, req: ApplyRequest): Promise<Apply
     const value = leftValues.get(key)
     if (value === undefined) skipped.push({ key, reason: 'not in source' })
     else if (value === '') skipped.push({ key, reason: 'blank in source' })
+    else if (opaque.has(key)) skipped.push({ key, reason: 'value not readable from source' })
     else {
       doc[key] = value
       written.push(key)

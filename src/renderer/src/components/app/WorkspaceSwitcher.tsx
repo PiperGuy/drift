@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronsUpDown, FolderOpen, Pencil, Plus, Server, Trash2 } from 'lucide-react'
+import { Check, ChevronsUpDown, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   DropdownMenu,
@@ -13,6 +13,8 @@ import { AddSourceDialog } from '@/components/app/AddSourceDialog'
 import { useWorkspace } from '@/store/workspace'
 import { PRODUCT } from '@shared/product'
 import { cn } from '@/lib/utils'
+import { SourceIcon } from '@/components/app/SourceIcon'
+import { rootKind } from '@/lib/sources'
 
 const err = (e: unknown): string =>
   e instanceof Error ? e.message.replace(/^.*Error: /, '') : String(e)
@@ -27,7 +29,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }): React.
   const [open, setOpen] = useState(false)
   const [dialog, setDialog] = useState<'new' | 'edit' | null>(null)
   const current = workspaces.find((w) => w.id === workspace)
-  const Icon = current?.path?.startsWith('ssh://') ? Server : FolderOpen
+  const kind = rootKind(current?.path)
 
   const remove = async (): Promise<void> => {
     if (!current) return
@@ -58,10 +60,10 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }): React.
             )}
           >
             {collapsed ? (
-              <Icon className="size-4 text-lemon-ink" aria-hidden="true" />
+              <SourceIcon kind={kind} className="size-4 text-lemon-ink" />
             ) : (
               <>
-                <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <SourceIcon kind={kind} className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">
                   {current?.name ?? '…'}
                 </span>
@@ -82,11 +84,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }): React.
               <Check
                 className={cn('size-3.5', w.id === workspace ? 'text-lemon-ink' : 'invisible')}
               />
-              {w.path?.startsWith('ssh://') ? (
-                <Server className="size-3.5 text-muted-foreground" />
-              ) : (
-                <FolderOpen className="size-3.5 text-muted-foreground" />
-              )}
+              <SourceIcon kind={rootKind(w.path)} className="size-3.5 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{w.name}</span>
             </DropdownMenuItem>
           ))}

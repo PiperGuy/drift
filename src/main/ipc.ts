@@ -17,7 +17,17 @@ import {
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log/main'
 import { grantRoot, revokeRoot, revokeRoots, scanWorkspace } from './workspace'
-import { baseRef, checkRemoteRoot, parseRef, readText, sshConfigHosts, sshRef } from './fs'
+import {
+  baseRef,
+  checkDockerRoot,
+  checkRemoteRoot,
+  dockerContainers,
+  dockerRef,
+  parseRef,
+  readText,
+  sshConfigHosts,
+  sshRef
+} from './fs'
 import type { RootInfo } from '@shared/channels'
 import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
 import { openStore } from './store'
@@ -48,23 +58,46 @@ import {
   vaultRestore,
   vaultShapeAt
 } from './providers/vault'
-import { VaultRestoreSchema, VaultShapeAtSchema, VaultSourceSpecSchema } from '@shared/ipc'
+import {
+  DockerHost,
+  DockerSourceSpecSchema,
+  EcsDiscoverSchema,
+  ProviderConnectSpecSchema,
+  VaultRestoreSchema,
+  VaultShapeAtSchema,
+  VaultSourceSpecSchema
+} from '@shared/ipc'
+import { connectProvider, registerProviders } from './providers'
+import { dropSecrets, forgetProviderConnection } from './providers/connection'
+import { awsProfiles } from './providers/aws/creds'
+import { discoverEcs } from './providers/aws/ecs'
+import { isPrefixSource } from './providers/aws/sm'
+import type { Store } from './store'
 import { viewEnv } from '@shared/env-lint'
 import { envKind } from '@shared/env-file'
 import { assertGranted } from './workspace'
 
-const toRoot = (path: string, label: string | null): RootInfo => {
+const toRoot = (store: Store, path: string, label: string | null): RootInfo => {
   const r = parseRef(path)
+  const fallback = (): string => {
+    switch (r.kind) {
+      case 'ssh':
+        return `${r.host}:${r.path}`
+      case 'docker':
+        return `${r.container}${r.host ? `@${r.host}` : ''}:${r.path}`
+      case 'vault':
+        return `${r.mount}/${r.path}`
+      case 'provider':
+        return `${r.provider}:${r.path || r.connectionId}`
+      default:
+        return path
+    }
+  }
   return {
     path,
-    kind: r.kind,
-    label:
-      label ??
-      (r.kind === 'ssh'
-        ? `${r.host}:${r.path}`
-        : r.kind === 'vault'
-          ? `${r.mount}/${r.path}`
-          : path)
+    kind: r.kind === 'provider' ? r.provider : r.kind,
+    label: label ?? fallback(),
+    ...(isPrefixSource(store, path) ? { prefix: true as const } : {})
   }
 }
 
@@ -80,6 +113,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   app.on('will-quit', () => store.close())
   // Vault adapter: registers the vault:// backend for fs.ts and holds session tokens.
   registerVault(store)
+  // Read-only providers (Vercel, GitHub, Railway, Render, Dokploy, Coolify, AWS): same seam.
+  registerProviders(store)
 
   // The server script is copied next to the database on every launch, so the path
   // clients store survives app updates and temporary AppImage mounts. The command is
@@ -162,7 +197,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     grantRoot(root)
     store.rememberRoot(root)
     store.logEvent('grant', { root })
-    return toRoot(root, null)
+    return toRoot(store, root, null)
   })
 
   ipcMain.handle(Channels.sshHosts, () => sshConfigHosts())
@@ -175,7 +210,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     grantRoot(root)
     store.rememberRoot(root)
     store.logEvent('grant', { root })
-    return toRoot(root, null)
+    return toRoot(store, root, null)
   })
 
   ipcMain.handle(Channels.workspaceRemove, (_e, raw: unknown) => {
@@ -183,12 +218,48 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const path = RootPath.parse(raw)
     revokeRoot(path)
     store.forgetRoot(path)
-    if (parseRef(path).kind === 'vault') {
+    const kind = parseRef(path).kind
+    if (kind === 'vault' || kind === 'provider') {
       // Drop the connection row and the in-memory token with the root.
       forgetVaultConnection(store, path)
+      forgetProviderConnection(store, path)
       store.logEvent('connection', { action: 'remove', root: path })
     }
     store.logEvent('revoke', { root: path })
+  })
+
+  ipcMain.handle(Channels.workspaceAddDocker, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const { host, container, path } = DockerSourceSpecSchema.parse(raw)
+    await checkDockerRoot(host ?? null, container, path)
+    const root = dockerRef(host ?? null, container, path.replace(/\/+$/, '') || '/')
+    grantRoot(root)
+    store.rememberRoot(root)
+    store.logEvent('grant', { root })
+    return toRoot(store, root, null)
+  })
+  ipcMain.handle(Channels.dockerContainers, (_e, raw: unknown) =>
+    dockerContainers(DockerHost.parse(raw) ?? null)
+  )
+  ipcMain.handle(Channels.awsProfiles, () => awsProfiles())
+  ipcMain.handle(Channels.ecsDiscover, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    return discoverEcs(EcsDiscoverSchema.parse(raw))
+  })
+
+  ipcMain.handle(Channels.providerConnect, async (_e, raw: unknown) => {
+    assertUnlocked(store)
+    const spec = ProviderConnectSpecSchema.parse(raw)
+    const result = await connectProvider(store, spec)
+    grantRoot(result.root.path)
+    store.rememberRoot(result.root.path, result.root.label)
+    // Redacted: provider and root only — never a token, profile credential or value.
+    store.logEvent(
+      'connection',
+      { action: 'add', root: result.root.path },
+      { provider: spec.provider, warnings: result.warnings.length }
+    )
+    return result
   })
 
   ipcMain.handle(Channels.vaultConnect, async (_e, raw: unknown) => {
@@ -237,7 +308,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     revokeRoots()
     const roots = store.listRoots()
     for (const r of roots) grantRoot(r.path)
-    return roots.map((r) => toRoot(r.path, r.label))
+    return roots.map((r) => toRoot(store, r.path, r.label))
   }
   ipcMain.handle(Channels.wsList, () => {
     assertUnlocked(store)
@@ -267,7 +338,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const all = store.listWorkspaces()
     if (all.length <= 1) throw new Error('Keep at least one workspace')
     const name = all.find((w) => w.id === id)?.name
-    dropVaultTokens(store.deleteWorkspace(id))
+    const dropped = store.deleteWorkspace(id)
+    dropVaultTokens(dropped)
+    dropSecrets(dropped)
     if (store.activeWorkspace() === id) store.setActiveWorkspace(all.find((w) => w.id !== id)!.id)
     store.logEvent('workspace', { action: 'delete', name })
     grantActive()
@@ -299,7 +372,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.dataForget, () => {
     assertUnlocked(store)
     revokeRoots()
-    dropVaultTokens(store.forgetAll())
+    const dropped = store.forgetAll()
+    dropVaultTokens(dropped)
+    dropSecrets(dropped)
     store.logEvent('forget', {})
   })
 

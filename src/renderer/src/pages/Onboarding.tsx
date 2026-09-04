@@ -135,7 +135,11 @@ export function OnboardingPage(): React.JSX.Element {
   const next = (): void => setStep((s) => Math.min(s + 1, STEPS.length - 1))
   const back = (): void => setStep((s) => Math.max(s - 1, 0))
   const review = receipt
-    ? receipt.counts.changed + receipt.counts.missing + receipt.counts.extra + receipt.counts.blank
+    ? receipt.counts.changed +
+      receipt.counts.missing +
+      receipt.counts.extra +
+      receipt.counts.blank +
+      receipt.counts.unknown
     : 0
   const mac = (info?.platform ?? (isMac ? 'darwin' : 'linux')) === 'darwin'
 

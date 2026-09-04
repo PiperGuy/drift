@@ -1,7 +1,7 @@
-import { baseRef, readText } from './fs'
+import { baseRef, readEnv, readText } from './fs'
 import { createHmac, randomBytes } from 'node:crypto'
 import { parseEnv } from '@shared/env-file'
-import { compareEnv, type DriftReceipt, type KeyEntry } from '@shared/drift'
+import { compareEnv, OPAQUE_FINGERPRINT, type DriftReceipt, type KeyEntry } from '@shared/drift'
 import type { EnvShape } from '@shared/channels'
 import { assertGranted } from './workspace'
 
@@ -49,10 +49,11 @@ export function fingerprint(value: string): string {
 /** Read a granted file and return its redacted shape. Raw values die here. */
 export async function envShape(path: string): Promise<EnvShape> {
   assertGranted(path)
-  const text = await readText(path)
+  const { text, opaque } = await readEnv(path)
+  // Opacity comes from provider metadata only; the text of a value never decides it.
   const entries: KeyEntry[] = parseEnv(text).map(({ key, value }) => ({
     key,
-    fingerprint: value === '' ? null : fingerprint(value)
+    fingerprint: value === '' ? null : opaque.has(key) ? OPAQUE_FINGERPRINT : fingerprint(value)
   }))
   return { path, name: baseRef(path), entries }
 }

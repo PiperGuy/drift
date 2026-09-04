@@ -1,4 +1,4 @@
-import { parseRef, readText, statRef, writeAtomic } from './fs'
+import { isReadOnlyRef, parseRef, readEnv, readText, statRef, writeAtomic } from './fs'
 import { applyVault } from './providers/vault'
 import { safeStorage } from 'electron'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
@@ -22,6 +22,13 @@ import type { Store } from './store'
  *   4. preserves the target's mode.
  * Raw values exist here only between read and write. Nothing is logged but key names.
  */
+
+const READ_ONLY = (ref: string): string =>
+  `${parseRef(ref).kind === 'vault' ? 'Vault environments' : 'Provider sources'} are read-only here. ${
+    parseRef(ref).kind === 'vault'
+      ? 'Change them through Compare \u2192 Apply, or restore a version from their history.'
+      : 'Change values in the provider itself, then rescan.'
+  }`
 
 function seal(bytes: Buffer): Buffer | null {
   return safeStorage.isEncryptionAvailable()
@@ -49,6 +56,7 @@ async function snapshot(store: Store, path: string, reason: Snapshot['reason']):
 export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyResult> {
   assertGranted(req.left)
   assertGranted(req.right)
+  if (isReadOnlyRef(req.right)) throw new Error(READ_ONLY(req.right))
   // Vault targets are guarded by check-and-set on the version, not by mtime.
   if (parseRef(req.right).kind === 'vault') return applyVault(store, req)
   const st = await statRef(req.right)
@@ -56,7 +64,10 @@ export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyR
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1) {
     throw new Error(`${req.right} changed since this plan was made. Compare again, then apply.`)
   }
-  const [leftText, rightText] = await Promise.all([readText(req.left), readText(req.right)])
+  const [{ text: leftText, opaque }, rightText] = await Promise.all([
+    readEnv(req.left),
+    readText(req.right)
+  ])
   const leftValues = new Map(parseEnv(leftText).map((e) => [e.key, e.value]))
   const assignments: { key: string; text: string }[] = []
   const skipped: ApplyResult['skipped'] = []
@@ -64,6 +75,7 @@ export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyR
     const raw = rawAssignment(leftText, key)
     if (raw === null) skipped.push({ key, reason: 'not in source' })
     else if ((leftValues.get(key) ?? '') === '') skipped.push({ key, reason: 'blank in source' })
+    else if (opaque.has(key)) skipped.push({ key, reason: 'value not readable from source' })
     else assignments.push({ key, text: raw })
   }
   if (assignments.length === 0) throw new Error('Nothing to write: every key was skipped.')
@@ -87,10 +99,7 @@ export async function formatFile(
   expectedMtime: number
 ): Promise<FormatResult> {
   assertGranted(path)
-  if (parseRef(path).kind === 'vault')
-    throw new Error(
-      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
-    )
+  if (parseRef(path).kind === 'vault' || isReadOnlyRef(path)) throw new Error(READ_ONLY(path))
   const st = await statRef(path)
   if (Math.abs(st.mtimeMs - expectedMtime) > 1)
     throw new Error(`${path} changed since it was opened. Rescan, then format.`)
@@ -112,10 +121,8 @@ export async function formatFile(
 /** Write user-typed values: update in place or append. Same guards and snapshot as apply. */
 export async function setValues(store: Store, req: SetRequest): Promise<SetResult> {
   assertGranted(req.path)
-  if (parseRef(req.path).kind === 'vault')
-    throw new Error(
-      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
-    )
+  if (parseRef(req.path).kind === 'vault' || isReadOnlyRef(req.path))
+    throw new Error(READ_ONLY(req.path))
   const st = await statRef(req.path)
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1)
     throw new Error(`${req.path} changed since it was opened. Rescan, then edit again.`)
@@ -139,6 +146,7 @@ export async function rollback(store: Store, id: number): Promise<void> {
     throw new Error(
       'Vault environments roll back from their own version history (open the file \u2192 History), not from file snapshots.'
     )
+  if (isReadOnlyRef(s.path)) throw new Error(READ_ONLY(s.path))
   if (!s.blob)
     throw new Error('This snapshot has no content: no keyring was available when it was taken.')
   assertGranted(s.path)

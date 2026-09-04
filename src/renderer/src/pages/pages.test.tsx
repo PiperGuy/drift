@@ -119,6 +119,27 @@ const plumbr: PlumbrApi = {
   installUpdate: vi.fn(async () => {}),
   onFullscreen: vi.fn(() => () => {}),
   sshHosts: vi.fn(async () => []),
+  vaultConnect: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  vaultHistory: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  vaultShapeAt: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  vaultRestore: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  providerConnect: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  addDockerRoot: vi.fn(async () => {
+    throw new Error('not in this test')
+  }),
+  dockerContainers: vi.fn(async () => []),
+  awsProfiles: vi.fn(async () => []),
+  ecsDiscover: vi.fn(async () => ({ clusters: [], services: [], tasks: [] })),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
     platform: 'linux',
@@ -215,6 +236,7 @@ test('receipt: empty state, then classes, filters, search and a plan with no app
     missing: 1,
     extra: 1,
     blank: 0,
+    unknown: 0,
     ignored: 1
   })
   assert.ok(screen.getByText('keys to review'))

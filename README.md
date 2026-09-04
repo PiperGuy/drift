@@ -40,6 +40,9 @@ src/
     ipc.ts     handlers, zod-validated
     workspace.ts granted roots + .env* discovery (metadata only)
     env.ts     read a granted file, parse, fingerprint. Raw values die here.
+    fs.ts      one ref-keyed seam for every source: local, ssh://, docker://, vault://, <provider>://
+    providers/ vault/ (read + CAS writes), and read-only adapters: vercel, github, railway, render,
+               dokploy, coolify, aws/ (Secrets Manager, ECS). http.ts, connection.ts, envtext.ts are shared.
   preload/     contextBridge. Exposes `window.plumbr` (typed, tiny). Sandboxed, so it may only import ./shared/channels.
   shared/      Pure code used on both sides. drift.ts (receipts, plans, MCP context), env-file.ts (parser), channels.ts (IPC contract), ipc.ts (zod schemas).
   renderer/    React app. pages/, store/ (zustand), components/ui (shadcn, generated), components/app (ours).
@@ -63,19 +66,19 @@ npm run build:mac | build:win | build:linux   # installers via electron-builder
 
 The website promises these. Everything below is either done, in progress or on the todo list.
 
-| Feature                       | Site copy                                                                                                                                                | Status                                                                     |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                               |
-| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                                     |
-| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                                    |
-| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal        |
-| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                       |
-| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                       |
-| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                       |
-| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | Vault KV v2 done (source + CAS-guarded target, version history); rest todo |
-| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                           |
-| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                       |
-| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                       |
+| Feature                       | Site copy                                                                                                                                                | Status                                                                                                                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace discovery           | Grant a root. Finds every `.env*`, groups by Git project, leaves files in place. Metadata first.                                                         | done (basic)                                                                                                                                                                                                                                                           |
+| Redacted drift receipts       | Every difference between two environments, by key name and class: same, changed, missing, extra, blank, ignored. Values compared as local fingerprints.  | done (two local files)                                                                                                                                                                                                                                                 |
+| Dry-run sync plan             | A receipt becomes a plan: add, update, keep, review. Extra keys never removed automatically.                                                             | done (descriptive only)                                                                                                                                                                                                                                                |
+| Per-environment secrets       | Production, staging and preview side by side per project. Switch context without copy-paste.                                                             | partial: per-project file matrix and redacted key counts. No reveal                                                                                                                                                                                                    |
+| Two-way repo sync             | Link a project to its folder, pull or push its .env in one click, diff before anything lands.                                                            | todo                                                                                                                                                                                                                                                                   |
+| Local history and audit trail | Every change and every approved sync recorded on the machine, roll back.                                                                                 | todo                                                                                                                                                                                                                                                                   |
+| Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                                                                                                                                                                                                                   |
+| Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | Vault KV v2 done (source + CAS-guarded target, version history). GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager and ECS are read-only sources (connect, scan, redacted receipts, read back for drift). Writes to those platforms: todo |
+| Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                                                                                                                                                                                                                       |
+| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                                                                                                                                                                                                                   |
+| Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                                                                                                                                                                                                                   |
 
 ## Todo
 
@@ -106,13 +109,17 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 
 ### Milestone 3: Human-approved platform sync
 
-- [ ] Provider interface: `read(target) → KeyEntry[]`, `plan(receipt)`, `apply(plan)` with per-key results. Apply is only callable from the approval dialog
-- [ ] Credential storage with `safeStorage` (OS keychain backed), never in plain files
-- [ ] GitHub Actions: repository, environment and organization secrets (public-key encryption via libsodium/tweetnacl), read-back of key names
-- [ ] Vercel: project env vars, production/preview/development targets, branch-scoped previews
-- [ ] Railway, Render (environment groups), Dokploy and Coolify (custom endpoint, custom CA)
-- [ ] AWS Secrets Manager: JSON secret ⇄ .env mapping, per-region, uses local AWS credentials
+- [x] Provider read seam: every source is a ref (`<provider>://<connection>/<target>`) behind `src/main/fs.ts`; adapters register `readText`, `stat`, `scan`. `apply` exists for local files, SSH, Docker and Vault only
+- [x] Credential storage with `safeStorage` (OS keychain backed), never in plain files; session-only by default, keyring on opt-in; AWS via the SDK credential chain (profile name + region stored, never a key)
+- [x] GitHub Actions read: repository, environment and organization variables (values) and secrets (names only, GitHub never returns them: compared as `unknown`, never `changed`)
+- [ ] GitHub Actions write: public-key encryption via libsodium/tweetnacl
+- [x] Vercel read: project env vars, production/preview/development targets, branch-scoped previews (`branches/<branch>/.env.preview`); sensitive vars are names only
+- [x] Railway (shared + per-service variables per environment), Render (environment groups + service variables), Dokploy and Coolify (custom endpoint, custom CA) read
+- [x] AWS Secrets Manager read: JSON object secret → .env, per region and profile, one secret or a `prefix/`; binary and non-object secrets refused
+- [x] AWS ECS read: cluster → service (or task) → container picked from SDK lists; task-definition environment through the API (no command runs), or files in the running container with ECS Exec on explicit opt-in
+- [x] Docker: files in a running container (local daemon or `-H ssh://host`), same read/compare/write path as SSH
 - [x] HashiCorp Vault KV v2: paths, namespaces, self-hosted or HCP; token or AppRole auth, keyring opt-in, check-and-set writes, version history with compare and restore (`src/main/providers/vault/`)
+- [ ] Platform writes (Vercel, GitHub, Railway, Render, Dokploy, Coolify, AWS Secrets Manager) behind the same exact-plan + re-read-before-apply flow as Vault
 - [ ] Approval dialog: exact source → target plan, per-key ops, extra keys shown as "keep", one plan at a time
 - [ ] Integrations page in-app matching the site's support matrix
 
@@ -168,15 +175,51 @@ theme, licence, agents, the audit log with snapshots, and data.
 
 ## Roots: several folders, and servers over SSH
 
-Workspace → **Add source** opens the source picker: Local folder, SSH server, EC2 instance (SSH) and HashiCorp Vault KV v2 work today; Docker, ECS and AWS Secrets Manager show their configuration and are marked coming soon.
+Workspace → **Add source** opens the source picker. Every entry is live: Local folder, SSH server, EC2 instance (SSH), Docker container, ECS container, AWS Secrets Manager, HashiCorp Vault KV v2, GitHub Actions, Vercel, Railway, Render, Dokploy and Coolify. Folders, SSH, EC2 and Docker are file sources (read, compare, edit, format, apply). Vault is read + check-and-set write. The rest are read-only (see the next section).
 A Vault source points at one KV v2 secret (one environment) or a folder of them (each leaf becomes an environment). Connect runs a preflight (health, token, mount version, capabilities); reads render redacted shapes; every write is a reviewed, check-and-set-guarded new version, and the file header's History button compares and restores versions. Tokens stay in memory for the session unless you opt into the OS keyring. The MCP server deliberately cannot read Vault sources (credentials never leave the app).
 Every root is listed in the sidebar with its projects; the × on a root stops reading it (files
 untouched). SSH uses the `ssh` binary on your machine, so `~/.ssh/config` aliases, keys, the
 agent, ProxyJump and known_hosts all apply and Drift stores no credentials. Key/agent auth only
 (BatchMode). The server needs GNU coreutils (any Linux VPS). Reads, compares, reveals, edits,
 formats and rollbacks work the same on remote files: values still stay in main, writes are still
-temp-file + rename with the same mtime guard. Docker and ECS would be further backends behind the
-same seam (`src/main/fs.ts`); not built yet.
+temp-file + rename with the same mtime guard. **EC2 instance** is the same SSH source with a
+user + public DNS form: Drift uses the SSH key pair you chose at launch (loaded in your agent),
+never AWS credentials. **Docker container** runs `docker exec <container> sh -c …` through the
+`docker` CLI on this machine (a remote daemon via `-H ssh://user@host`, so the same ssh config
+applies); the container must be running and have `sh` + coreutils. Reads and writes work exactly
+like SSH. Container names and paths are validated and passed as argument arrays, never a shell
+string.
+
+## Read-only provider sources
+
+ECS, AWS Secrets Manager, GitHub Actions, Vercel, Railway, Render, Dokploy and Coolify connect
+from the main process with your own credentials, straight to the provider (no Plumbr service, no
+proxy, no polling). Connect runs a preflight, then each source scans into environment "files"
+whose contents are rendered `KEY=value` text, so receipts, the viewer, reveal and MCP-free
+compare all work unchanged. They are **read-only**: Apply to B is disabled when B is one of them,
+the viewer hides Format / Edit / Add key, and main refuses any write. Change values in the
+provider, then rescan. Tokens live in memory for the session; tick the keyring box to seal one
+with `safeStorage`. Config rows never hold a credential. Removing the source (or the workspace, or
+Forget data) deletes the connection and drops the token.
+
+Some providers return names but not values. Those keys render with a stand-in value, show as
+"reported by name only" in the viewer, and compare as **unknown** (present on both sides, value
+unknowable), never as `same` or `changed`. Apply never copies a stand-in.
+
+| Source              | What becomes a file                                                                                                                             | Values               | Limits                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AWS Secrets Manager | one JSON-object secret, or every JSON-object secret under a `prefix/`                                                                           | yes                  | Binary, plaintext and non-object JSON secrets fail with a safe message. Nested values are counted, not shown. SDK credential chain (profile, SSO, env); only region + profile name stored.                                                                                                                                                                                                                                        |
+| ECS container       | cluster → `service:<name>` (follows deployments) or `task:<id>` → container. Default: the task definition's `environment` + `secrets` as `.env` | `environment` yes    | `secrets` are names only (resolved inside the task). `environmentFiles` (S3) are noted, not read. Optional **ECS Exec** mode reads `.env*` files under a directory in the running container via `aws ecs execute-command`: needs AWS CLI v2, the Session Manager plugin, `enableExecuteCommand` and `ecs:ExecuteCommand`; every scan/read runs `find`/`stat`/`cat` in the container, so it is opt-in per source and never writes. |
+| GitHub Actions      | `.env` (repository or organization) + `.env.<environment>`                                                                                      | variables yes        | Secrets are names only: drift is present / missing, never changed. Fine-grained PAT with Actions secrets + variables read (and Environments read).                                                                                                                                                                                                                                                                                |
+| Vercel              | `.env.production`, `.env.preview`, `.env.development`, `branches/<branch>/.env.preview`                                                         | yes (`decrypt=true`) | `sensitive` vars are names only. Team projects need the team id.                                                                                                                                                                                                                                                                                                                                                                  |
+| Railway             | `.env.<environment>` (shared) and `<service>/.env.<environment>`                                                                                | yes                  | Account or team token; project tokens are not supported.                                                                                                                                                                                                                                                                                                                                                                          |
+| Render              | `env-groups/<name>/.env`, `services/<name>/.env`                                                                                                | yes                  | Secret files in a group are listed in a comment, not read.                                                                                                                                                                                                                                                                                                                                                                        |
+| Dokploy             | `<project>/[<environment>/]<application>/.env` (the stored env text as-is)                                                                      | yes                  | Custom CA supported. Compose services not listed.                                                                                                                                                                                                                                                                                                                                                                                 |
+| Coolify             | `<application>/.env` and `.env.preview`                                                                                                         | yes                  | Custom CA supported. A variable the API returns without a value is names only.                                                                                                                                                                                                                                                                                                                                                    |
+
+Every provider error names its branch (invalid config, no credentials, expired SSO session,
+unauthorized, forbidden scope, not found, malformed response, rate limit with retry-after, timeout,
+unreachable host) and never contains a token, URL query or value.
 
 ## Viewing a file
 
@@ -221,7 +264,9 @@ The app bundles a stdio MCP server (`out/main/mcp.js`) that runs under the app b
 `ELECTRON_RUN_AS_NODE=1`, so nothing else needs installing. Open **Agents** in the app and copy
 the one-liner for Claude Code or the JSON for Cursor and friends. Tools: `list_projects`,
 `env_status`, `compare_env`, `dry_run_plan`. It reads only the workspace granted in the app,
-returns key names and drift classes, never values, and has no write or sync tool.
+returns key names and drift classes, never values, and has no write or sync tool. It can read
+folder, SSH and Docker sources; Vault and provider sources need credentials that stay in the app,
+so it refuses those with a clear message.
 
 ## Licensing and trial
 

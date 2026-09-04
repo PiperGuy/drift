@@ -96,13 +96,13 @@ meta         (key, value)  -- schema_version, install_id, fingerprint_key_ref
 
 ### 3.2 Keys and secrets at rest
 
-| Secret                                                                     | Where                                                                                  | Notes                                                                                                                                                                         |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fingerprint HMAC key                                                       | random 32 bytes at first run, `safeStorage.encryptString` → `meta.fingerprint_key_ref` | Per install, so fingerprints are stable across launches (history and receipts stay comparable) but useless off-machine. Today it is per session. Change when the store lands. |
-| Provider tokens (GitHub, Vercel, Railway, Render, Dokploy, Coolify, Vault) | `connections.secret_blob` via `safeStorage`                                            | Decrypted in memory only for the duration of one provider call.                                                                                                               |
-| AWS                                                                        | not stored                                                                             | Standard credential chain: profiles, SSO, env. The app only stores the profile name and region.                                                                               |
-| Encrypted file snapshots (opt-in)                                          | `file_history.blob` via `safeStorage`                                                  | Off by default. Needed only for rollback of contents.                                                                                                                         |
-| Share link key                                                             | nowhere                                                                                | URL fragment only.                                                                                                                                                            |
+| Secret                                                                     | Where                                                                                   | Notes                                                                                                                                                                         |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fingerprint HMAC key                                                       | random 32 bytes at first run, `safeStorage.encryptString` → `meta.fingerprint_key_ref`  | Per install, so fingerprints are stable across launches (history and receipts stay comparable) but useless off-machine. Today it is per session. Change when the store lands. |
+| Provider tokens (GitHub, Vercel, Railway, Render, Dokploy, Coolify, Vault) | main-process Map for the session; `connections.secret_blob` via `safeStorage` on opt-in | Session-only by default. Sealed only when the user ticks the keyring box and `safeStorage` is available. Dropped with the source, the workspace or Forget data.               |
+| AWS                                                                        | not stored                                                                              | Standard credential chain: profiles, SSO, env. The app only stores the profile name and region.                                                                               |
+| Encrypted file snapshots (opt-in)                                          | `file_history.blob` via `safeStorage`                                                   | Off by default. Needed only for rollback of contents.                                                                                                                         |
+| Share link key                                                             | nowhere                                                                                 | URL fragment only.                                                                                                                                                            |
 
 `safeStorage.isEncryptionAvailable()` false (no keyring on Linux, locked session): the app refuses to persist secrets and offers session-only connections instead. It never falls back to plaintext.
 
@@ -130,21 +130,24 @@ Same as 4.3 with the file adapter: write to a temp sibling, fsync, rename. Prese
 
 Every action appends an event. Every compare stores a redacted snapshot. Rollback of contents is available only if the user turned on encrypted file snapshots for that project.
 
-## 5. Provider adapters
+## 5. Provider adapters (as built)
 
-One interface, one folder per provider in `src/main/providers/`:
+Every source is a _ref_ string and every read in main goes through one seam, `src/main/fs.ts`: a local path, `ssh://host/path`, `docker://[host]/container/path`, `vault://conn/mount/path`, or `<provider>://<connectionId>/<target>` for the read-only providers. Adapters live one folder per provider under `src/main/providers/` and register a backend with three functions:
 
 ```ts
-interface Provider {
-  id: 'github' | 'vercel' | 'railway' | 'render' | 'dokploy' | 'coolify' | 'aws-sm' | 'vault'
-  test(conn): Promise<void> // auth check, no writes
-  listTargets(conn): Promise<Target[]> // repos, projects, services, secrets, paths
-  read(conn, target): Promise<KeyEntry[]> // names + fingerprints where values are readable
-  apply(conn, target, plan): Promise<ApplyResult> // per-key outcome, only from the approval dialog
+type ProviderBackend = {
+  scan(root, ref): Promise<ScanResult> // targets → environment "files" (metadata only, no values fetched)
+  readText(ref): Promise<string> // canonical KEY=value text; values exist only inside this call
+  stat(ref): Promise<Stat> // provider timestamp where the API has one
 }
+// plus, per provider: connect(store, spec) → preflight, connection row, root
 ```
 
-All HTTP happens in main with `fetch`. Custom CA support (Dokploy, Coolify) via `undici` `Agent` with the user-supplied PEM from `config_json`. GitHub secret writes use libsodium sealed boxes with the repository public key (`libsodium-wrappers` or `tweetnacl` + `tweetnacl-sealedbox-js`, both pure JS). AWS via `@aws-sdk/client-secrets-manager` with the default chain.
+Rendering to `.env` text (`providers/envtext.ts`) is what lets the existing parser, fingerprinting, receipts, viewer and reveal work unchanged. A key a provider reports by name only (GitHub secrets, Vercel `sensitive`, ECS `secrets`) is rendered with a stand-in value; `envShape` turns it into the `unknown` fingerprint, `compareEnv` classifies it as `unknown` (never `same`/`changed`), and `applyPlan` skips it.
+
+Shared pieces: `providers/http.ts` (plain `node:https`, custom CA via `Agent({ ca })`, typed `ProviderError` per branch, cursor/page helper), `providers/connection.ts` (session-token map, `safeStorage` opt-in sealing, drop-on-remove). Vault keeps its own client and is the only adapter with a write path (check-and-set). AWS adapters use `@aws-sdk/client-secrets-manager` and `@aws-sdk/client-ecs` with `fromNodeProviderChain({ profile })`; ECS Exec mode shells out to `aws ecs execute-command` as an argument array and wraps the container-side output in markers + base64 to survive the pty. Docker is a transport variant of SSH inside `fs.ts` (`docker exec <container> sh -c <script>`), not a provider: it reads and writes files.
+
+Writes to the API providers are not implemented. When they land they go behind the same exact-plan + re-read-before-apply flow as Vault (4.3); the MCP server never gets a write tool. GitHub secret writes would need libsodium sealed boxes with the repository public key.
 
 ## 6. What can and cannot be fully local
 

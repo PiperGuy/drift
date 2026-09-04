@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { isReadOnlyPath } from '@/lib/sources'
 import { VaultVersions } from './VaultVersions'
 import { History as HistoryIcon } from 'lucide-react'
 
@@ -214,6 +215,8 @@ export function EnvViewer({
   const [formatting, setFormatting] = useState(false)
   const [versions, setVersions] = useState(false)
   const isVault = file.path.startsWith('vault://')
+  // Provider sources (Vercel, GitHub, AWS, …) have no write path: no format, edit or add.
+  const readOnly = isReadOnlyPath(file.path)
   const [error, setError] = useState<string | null>(null)
   const rescan = useWorkspace((s) => s.rescan)
   const noteWritten = useWorkspace((s) => s.noteWritten)
@@ -403,25 +406,27 @@ export function EnvViewer({
           {revealingAll ? <Fingerprint className="animate-pulse" /> : all ? <EyeOff /> : <Eye />}
           {all ? 'Hide all' : 'Reveal all'}
         </Button>
-        <Button
-          size="xs"
-          variant={view?.formatted ? 'ghost' : 'outline'}
-          className="press"
-          disabled={!view || view.formatted || formatting}
-          title={
-            view?.formatted
-              ? 'Already in canonical form'
-              : `Fix ${fixable} fixable hint${fixable === 1 ? '' : 's'} and tidy spelling`
-          }
-          onClick={format}
-        >
-          {formatting ? (
-            <Loader2 className="animate-spin motion-reduce:animate-none" />
-          ) : (
-            <Sparkles />
-          )}
-          {view?.formatted ? 'Formatted' : 'Format'}
-        </Button>
+        {!readOnly && (
+          <Button
+            size="xs"
+            variant={view?.formatted ? 'ghost' : 'outline'}
+            className="press"
+            disabled={!view || view.formatted || formatting}
+            title={
+              view?.formatted
+                ? 'Already in canonical form'
+                : `Fix ${fixable} fixable hint${fixable === 1 ? '' : 's'} and tidy spelling`
+            }
+            onClick={format}
+          >
+            {formatting ? (
+              <Loader2 className="animate-spin motion-reduce:animate-none" />
+            ) : (
+              <Sparkles />
+            )}
+            {view?.formatted ? 'Formatted' : 'Format'}
+          </Button>
+        )}
         <Button size="icon-xs" variant="ghost" aria-label="Close file" onClick={guardedClose}>
           <X />
         </Button>
@@ -482,7 +487,7 @@ export function EnvViewer({
                   Cancel
                 </Button>
               </form>
-            ) : (
+            ) : readOnly ? null : (
               <Button
                 size="xs"
                 variant="outline"
@@ -620,7 +625,7 @@ export function EnvViewer({
                           onHide={() => setShown(null)}
                           all={all}
                         />
-                        {!l.shadowed && (
+                        {!l.shadowed && !readOnly && (
                           <Button
                             size="icon-xs"
                             variant="ghost"
@@ -762,9 +767,11 @@ export function EnvViewer({
       )}
       {versions && <VaultVersions file={file} onClose={() => setVersions(false)} />}
       <p className="shrink-0 border-t px-4 py-1.5 text-[10px] text-muted-foreground">
-        {isVault
-          ? 'A rendered view of the Vault secret: keys shown, values hidden. Changes happen through Compare \u2192 Apply or the version history, each one a check-and-set-guarded new version.'
-          : "Values are hidden. The first time you reveal one, the OS asks you to confirm; after that it doesn't for the rest of the session. A value stays visible for 20 seconds. Format tidies the file without changing what it means, and takes a snapshot first."}
+        {readOnly
+          ? 'A rendered view of what the provider returns: keys shown, values hidden, read-only. Keys marked "reported by name only" have no readable value and compare as unknown. Change values in the provider itself, then rescan.'
+          : isVault
+            ? 'A rendered view of the Vault secret: keys shown, values hidden. Changes happen through Compare \u2192 Apply or the version history, each one a check-and-set-guarded new version.'
+            : "Values are hidden. The first time you reveal one, the OS asks you to confirm; after that it doesn't for the rest of the session. A value stays visible for 20 seconds. Format tidies the file without changing what it means, and takes a snapshot first."}
       </p>
     </div>
   )

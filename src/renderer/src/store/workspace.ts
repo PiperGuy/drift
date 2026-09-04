@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import { toast } from 'sonner'
 import type { DriftReceipt } from '@shared/drift'
 import type {
+  DockerSourceSpec,
   EnvFileInfo,
+  ProviderConnectSpec,
   RootInfo,
   ScanResult,
   VaultSourceSpec,
@@ -29,7 +31,9 @@ export type PageId = (typeof PAGES)[number]
 export type SourceSpec =
   | { kind: 'local'; name: string }
   | { kind: 'ssh'; name: string; host: string; path: string }
+  | ({ kind: 'docker'; name: string } & DockerSourceSpec)
   | ({ kind: 'vault' } & VaultSourceSpec)
+  | { kind: 'provider'; name: string; spec: ProviderConnectSpec }
   | { kind: 'rename'; name: string }
 
 export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
@@ -114,8 +118,12 @@ type State = {
   /** Rename the active source and, if the root changed, swap it. */
   updateSource: (req: SourceSpec) => Promise<void>
   addSsh: (host: string, path: string) => Promise<void>
+  /** Verify with docker exec, then grant a container directory. */
+  addDocker: (spec: DockerSourceSpec) => Promise<RootInfo>
   /** Preflight + connect a Vault source; the credential goes to main once and never returns. */
   addVault: (spec: VaultSourceSpec) => Promise<RootInfo>
+  /** Preflight + connect a read-only provider; tokens go to main once and never return. */
+  addProvider: (spec: ProviderConnectSpec) => Promise<RootInfo>
   removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
@@ -285,17 +293,26 @@ export const useWorkspace = create<State>((set, get) => ({
       req.name.trim() ||
       (req.kind === 'ssh'
         ? `${req.host}:${req.path}`
-        : req.kind === 'vault'
-          ? `vault:${req.path}`
-          : 'New source')
+        : req.kind === 'docker'
+          ? `${req.container}:${req.path}`
+          : req.kind === 'vault'
+            ? `vault:${req.path}`
+            : req.kind === 'provider'
+              ? req.spec.provider
+              : 'New source')
     const w = await window.plumbr.createWorkspace(name)
     await get().loadWorkspaces()
     await get().switchWorkspace(w.id)
     try {
       if (req.kind === 'ssh') {
         await get().addSsh(req.host, req.path)
+      } else if (req.kind === 'docker') {
+        await get().addDocker(req)
       } else if (req.kind === 'vault') {
         const root = await get().addVault(req)
+        if (!req.name.trim()) await get().renameWorkspace(w.id, root.label)
+      } else if (req.kind === 'provider') {
+        const root = await get().addProvider(req.spec)
         if (!req.name.trim()) await get().renameWorkspace(w.id, root.label)
       } else {
         const ok = await get().grant()
@@ -331,9 +348,16 @@ export const useWorkspace = create<State>((set, get) => ({
         await get().addSsh(req.host, req.path)
         if (old) await get().removeRoot(old.path)
       }
-    } else if (req.kind === 'vault') {
+    } else if (req.kind === 'docker') {
+      const next = `docker://${req.host ?? ''}/${req.container}${req.path.replace(/\/+$/, '') || '/'}`
+      if (old?.path !== next) {
+        await get().addDocker(req)
+        if (old) await get().removeRoot(old.path)
+      }
+    } else if (req.kind === 'vault' || req.kind === 'provider') {
       // Reconnect: a fresh connection replaces the old root (and its stored credential).
-      await get().addVault(req)
+      if (req.kind === 'vault') await get().addVault(req)
+      else await get().addProvider(req.spec)
       if (old) await get().removeRoot(old.path)
     } else if (req.kind === 'local') {
       // The caller passes kind 'local' only when the user chose a different directory.
@@ -351,6 +375,28 @@ export const useWorkspace = create<State>((set, get) => ({
     }))
     void get().loadWorkspaces()
     await get().rescan()
+  },
+
+  addDocker: async (spec) => {
+    const root = await window.plumbr.addDockerRoot(spec)
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    void get().loadWorkspaces()
+    await get().rescan()
+    return root
+  },
+
+  addProvider: async (spec) => {
+    const { root, summary, warnings } = await window.plumbr.providerConnect(spec)
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    toast.success(`Connected ${root.label}`, { description: summary })
+    if (warnings.length) toast.warning('Connection notes', { description: warnings.join(' ') })
+    void get().loadWorkspaces()
+    await get().rescan()
+    return root
   },
 
   addVault: async (spec) => {

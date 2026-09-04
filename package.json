@@ -36,6 +36,9 @@
     "release:major": "npm version major -m 'release: v%s' && git push --follow-tags"
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "^3.1126.0",
+    "@aws-sdk/client-secrets-manager": "^3.1126.0",
+    "@aws-sdk/credential-providers": "^3.1126.0",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",

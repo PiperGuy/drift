@@ -90,7 +90,7 @@ export function openStore(file: string): {
   setActiveWorkspace: (id: number) => void
   createWorkspace: (name: string) => Workspace
   renameWorkspace: (id: number, name: string) => void
-  /** Also deletes connections referenced by the workspace's vault roots; returns their ids. */
+  /** Also deletes connections referenced by the workspace's vault/provider roots; returns their ids. */
   deleteWorkspace: (id: number) => number[]
   touchRoot: (path: string) => void
   /** Wipes roots, receipts, events, snapshots AND provider connections; returns connection ids. */
@@ -171,14 +171,14 @@ export function openStore(file: string): {
 
   const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
 
-  /** Connection ids referenced by vault:// roots — of one workspace, or of every workspace. */
-  const vaultConnIds = (workspaceId?: number): number[] => {
+  /** Connection ids referenced by vault:// and provider roots — of one workspace, or of every workspace. */
+  const connIds = (workspaceId?: number): number[] => {
     const rows = (
       workspaceId === undefined
         ? (db.prepare('SELECT path FROM roots').all() as { path: string }[])
         : (q.listRoots.all(workspaceId) as { path: string }[])
     ).map((r) => parseRef(r.path))
-    return rows.flatMap((r) => (r.kind === 'vault' ? [r.connectionId] : []))
+    return rows.flatMap((r) => ('connectionId' in r ? [r.connectionId] : []))
   }
 
   return {
@@ -203,7 +203,7 @@ export function openStore(file: string): {
     renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
     deleteWorkspace: (id) => {
       // A root's credentials must not outlive the root (Codex review P1).
-      const ids = vaultConnIds(id)
+      const ids = connIds(id)
       for (const c of ids) q.deleteConnection.run(c)
       q.deleteWorkspaceRoots.run(id)
       q.deleteWorkspace.run(id)
@@ -213,7 +213,7 @@ export function openStore(file: string): {
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
     // Connections go too: a sealed token must never outlive "Forget data" (Codex review P1).
     forgetAll: () => {
-      const ids = vaultConnIds()
+      const ids = connIds()
       db.exec(
         'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history; DELETE FROM connections;'
       )

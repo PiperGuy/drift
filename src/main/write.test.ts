@@ -97,3 +97,39 @@ test('setValues: updates in place keeping export/comment, appends new keys, quot
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('apply: provider targets are refused; a local value that merely looks like the opaque marker is ordinary', async () => {
+  const { OPAQUE_VALUE, OPAQUE_FINGERPRINT } = await import('@shared/drift')
+  const { envShape } = await import('./env')
+  const dir = mkdtempSync(join(tmpdir(), 'drift-opaque-'))
+  try {
+    grantRoot(dir)
+    const store = openStore(join(dir, 'plumbr.db'))
+    const left = join(dir, 'opaque.env')
+    const right = join(dir, 'target.env')
+    writeFileSync(left, `A=1\nSECRET="${OPAQUE_VALUE}"\n`)
+    writeFileSync(right, 'A=0\n')
+    // Opacity is provider metadata, never inferred from the text: this literal is a normal value.
+    const fp = (await envShape(left)).entries.find((e) => e.key === 'SECRET')!.fingerprint
+    assert.notEqual(fp, OPAQUE_FINGERPRINT)
+    assert.ok(fp)
+    const mtime = statSync(right).mtimeMs
+    const r = await applyPlan(store, { left, right, keys: ['A', 'SECRET'], expectedMtime: mtime })
+    assert.deepEqual(r.written, ['A', 'SECRET'])
+    assert.deepEqual(r.skipped, [])
+    assert.ok(readFileSync(right, 'utf8').includes(`SECRET="${OPAQUE_VALUE}"`))
+    grantRoot('github://1/acme/api')
+    await assert.rejects(
+      applyPlan(store, {
+        left,
+        right: 'github://1/acme/api/.env',
+        keys: ['A'],
+        expectedMtime: 0
+      }),
+      /read-only/
+    )
+    store.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

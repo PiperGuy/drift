@@ -1,10 +1,11 @@
 import { type CSSProperties } from 'react'
-import { FolderOpen, GitBranch, Search, Server, X } from 'lucide-react'
+import { GitBranch, Search, X } from 'lucide-react'
 import { ENV_KINDS, envKind } from '@shared/env-file'
 import { Input } from '@/components/ui/input'
 import { UNGROUPED, useWorkspace } from '@/store/workspace'
 import { KIND_LABEL, KIND_TONE, useFileMatch, useGroups } from '@/lib/projects'
 import { cn } from '@/lib/utils'
+import { SourceIcon } from '@/components/app/SourceIcon'
 
 /**
  * The project directory of the active source, in the sidebar. Search filters
@@ -70,11 +71,7 @@ export function ProjectList({
             <div key={rootInfo.path}>
               {roots.length > 1 && (
                 <div className="mt-2 flex items-center gap-1.5 px-1 pb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase first:mt-0">
-                  {rootInfo.kind === 'ssh' ? (
-                    <Server className="size-3" />
-                  ) : (
-                    <FolderOpen className="size-3" />
-                  )}
+                  <SourceIcon kind={rootInfo.kind} className="size-3" />
                   <span className="min-w-0 flex-1 truncate normal-case" title={rootInfo.path}>
                     {rootInfo.label}
                   </span>
