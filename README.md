@@ -55,10 +55,17 @@ npm install          # Node 24 (see .node-version). First install downloads Elec
 npm run dev          # electron-vite dev with HMR
 npm run check        # typecheck + lint + prettier + tests
 npm test             # vitest
+npm run test:e2e     # desktop E2E: builds, then Playwright drives the real app (docs/e2e.md)
 npm run ui:add -- dialog   # add a shadcn component
 npm run build        # typecheck + bundle to out/
 npm run build:mac | build:win | build:linux   # installers via electron-builder
 ```
+
+`build:win` is a local-only convenience; no automated workflow builds or publishes
+Windows — it is intentionally unavailable (see “CI, main-branch artifacts and releasing”).
+
+On a headless Linux box, run the E2E suite under a virtual display:
+`xvfb-run -a npm run test:e2e`. Details and prerequisites: [docs/e2e.md](docs/e2e.md).
 
 `package.json#allowScripts` whitelists install scripts (electron, esbuild, electron-winstaller) for npm 11's script gating. Re-approve after bumping those.
 
@@ -147,7 +154,22 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 - Never send a raw value over IPC, log one, or put one in an error message. Fingerprints are HMAC-SHA256 with a per-session random key.
 - Never commit secrets. `.env*` is ignored.
 
-## Releasing
+## CI, main-branch artifacts and releasing
+
+**Every PR and push to main** runs `.github/workflows/ci.yml`: the full quality gate
+(`npm ci`, typecheck, lint, prettier, unit tests, build) plus the desktop E2E suite
+against the built Electron app under a headless X server (`xvfb-run`).
+
+**Every merge to main** additionally runs `.github/workflows/main-artifacts.yml`: it
+re-runs `npm run check`, then packages installers for the two supported platforms and
+uploads them as GitHub **Actions artifacts** on that run (retained 30 days, not
+published anywhere else):
+
+- `drift-macos-installers` — `.dmg` and `.zip`
+- `drift-linux-installers` — `.AppImage` and `.deb`
+
+These main-branch builds are always **unsigned**. **Windows is intentionally not
+built or published** by any automated workflow.
 
 ```bash
 npm run release:patch   # or release:minor / release:major
@@ -155,14 +177,15 @@ npm run release:patch   # or release:minor / release:major
 
 `npm version` bumps `package.json`, commits `release: vX.Y.Z` and pushes the tag. The
 tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
-macOS, Windows and Linux, then attaches the installers (`.dmg`, `-setup.exe`, `.AppImage`,
+macOS and Linux only, then attaches the installers (`.dmg`, `.zip`, `.AppImage`,
 `.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
 unsigned until these repository secrets exist, after which the same workflow signs and
 notarizes with no other change: `CSC_LINK` + `CSC_KEY_PASSWORD` (Developer ID Application .p12,
-base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarization),
-`WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (Windows code-signing .pfx). Unsigned: macOS users open
-via right-click → Open the first time, Windows shows SmartScreen. `Actions → Release → Run workflow` builds the current branch without
+base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarization).
+Unsigned: macOS users open via right-click → Open the first time.
+`Actions → Release → Run workflow` builds the current branch without
 publishing; installers are attached to the run as artifacts.
+The intent of all three workflows is guarded by `tests/workflows.test.ts`.
 
 ## Sources and the sidebar
 

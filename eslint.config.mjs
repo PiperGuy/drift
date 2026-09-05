@@ -29,6 +29,12 @@ export default defineConfig(
     }
   },
   {
+    // Playwright fixtures: `use` is the fixture callback, not a React hook, and
+    // a dependency-less fixture takes `{}` as its first parameter by contract.
+    files: ['e2e/**'],
+    rules: { 'react-hooks/rules-of-hooks': 'off', 'no-empty-pattern': 'off' }
+  },
+  {
     // shadcn/ui generated components: keep them as generated so `npm run ui:add` stays diff-free.
     files: ['src/renderer/src/components/ui/**'],
     rules: {

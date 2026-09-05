@@ -5,6 +5,11 @@ import log from 'electron-log/main'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { Channels } from '@shared/channels'
+import { e2eUserData } from './e2e'
+
+// E2E runs get a throwaway userData; a no-op otherwise. Before the
+// single-instance lock and the logger, which both key on userData.
+e2eUserData()
 
 log.initialize()
 log.errorHandler.startCatching()

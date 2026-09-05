@@ -78,11 +78,16 @@ import { viewEnv } from '@shared/env-lint'
 import { PRODUCT } from '@shared/product'
 import { envKind } from '@shared/env-file'
 import { assertGranted } from './workspace'
+import { e2eFixtureRoot } from './e2e'
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
   const dataPath = join(app.getPath('userData'), 'plumbr.db')
   const store = openStore(dataPath)
+  // E2E only (never in a packaged build): remember the fixture root the test
+  // runner would otherwise have to grant through the OS folder picker.
+  const fixtureRoot = e2eFixtureRoot()
+  if (fixtureRoot) store.rememberRoot(fixtureRoot)
   loadFingerprintKey(
     () => store.getMeta('fingerprint_key_ref'),
     (sealed) => store.setMeta('fingerprint_key_ref', sealed),

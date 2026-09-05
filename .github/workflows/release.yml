@@ -1,7 +1,8 @@
 name: Release
-# Tag push (npm run release:patch|minor|major) builds all three platforms and
+# Tag push (npm run release:patch|minor|major) builds macOS and Linux and
 # uploads the installers to a draft GitHub Release named after the tag.
-# workflow_dispatch builds without publishing; installers land as run artifacts.
+# Windows is deliberately not built. workflow_dispatch builds without
+# publishing; installers land as run artifacts.
 on:
   push:
     tags: ['v*']
@@ -18,8 +19,6 @@ jobs:
             script: build:linux
           - os: macos-latest
             script: build:mac
-          - os: windows-latest
-            script: build:win
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +26,12 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run check
       - run: npm run ${{ matrix.script }} -- --publish onTagOrDraft
@@ -38,8 +43,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: drift-${{ matrix.os }}
@@ -48,5 +51,5 @@ jobs:
             dist/*.deb
             dist/*.dmg
             dist/*.zip
-            dist/*-setup.exe
           if-no-files-found: error
+          retention-days: 30

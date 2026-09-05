@@ -3,7 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
 jobs:
+  # Fast quality gate: types, lint, formatting, unit/integration tests, build.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -12,9 +15,43 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
       - run: npx electron-vite build
+
+  # Desktop E2E: production build, then Playwright drives the real Electron app
+  # under a headless X server. See docs/e2e.md.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run build
+      - run: xvfb-run -a --server-args="-screen 0 1280x800x24" npm run test:e2e
+      # Failure screenshots and error context only; the UI never renders values.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-failure-output
+          path: e2e-results/
+          if-no-files-found: ignore
+          retention-days: 7
