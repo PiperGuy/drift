@@ -2,7 +2,7 @@ import { test, vi, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tempDir } from '../testkit'
+import { linuxCommandShims, tempDir } from '../testkit'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -258,6 +258,7 @@ test('ECS Exec mode: files inside the running container via a fake aws CLI', asy
   // Fake `aws`: prints the session banners around `sh -c <command>` run locally.
   const bin = join(dir, 'bin')
   mkdirSync(bin, { recursive: true })
+  linuxCommandShims(bin)
   const log = join(dir, 'aws.log')
   writeFileSync(
     join(bin, 'aws'),
