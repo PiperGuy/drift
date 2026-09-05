@@ -1,0 +1,56 @@
+name: Main artifacts
+# Every push to main (i.e. every merged PR) produces installable builds for the
+# two supported desktop platforms and attaches them to the run as Actions
+# artifacts. Windows is deliberately not built or published. Builds here are
+# unsigned; signing/notarization only happens in the tag Release workflow when
+# its secrets are configured.
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  package:
+    name: package (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+            script: build:mac
+            files: |
+              dist/*.dmg
+              dist/*.zip
+          - name: linux
+            os: ubuntu-latest
+            script: build:linux
+            files: |
+              dist/*.AppImage
+              dist/*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      # Never package a build that fails the quality gate.
+      - run: npm ci
+      - run: npm run check
+      - run: npm run ${{ matrix.script }} -- --publish never
+        env:
+          # No signing identity on main builds: stay deterministic and unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-${{ matrix.name }}-installers
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 30

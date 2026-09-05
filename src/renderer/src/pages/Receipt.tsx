@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { ArrowRight, ArrowRightLeft, PenLine, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowRightLeft, PenLine, RefreshCw, Search, X } from 'lucide-react'
+import type { EnvFileInfo } from '@shared/channels'
 import { planSync, type DriftStatus, type SyncAction } from '@shared/drift'
 import {
   DEFAULT_VIEW,
@@ -11,6 +12,8 @@ import {
 } from '@shared/receipt-view'
 import { StatusBadge } from '@/components/app/StatusBadge'
 import { STATUS_META } from '@/lib/status'
+import { applyBlocker } from '@/lib/sources'
+import { ProjectCompare, SideLabel } from '@/components/app/ProjectCompare'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DEFAULT_IGNORE, useWorkspace } from '@/store/workspace'
@@ -24,26 +27,22 @@ const OP_META: Record<SyncAction['op'], { glyph: string; tone: string }> = {
   keep: { glyph: '=', tone: 'text-muted-foreground' }
 }
 
-function Empty({ onWorkspace }: { onWorkspace: () => void }): React.JSX.Element {
+/** "source · project · file" for one side, so the same relative path from two sources reads apart. */
+export function FileLabel({ file }: { file: EnvFileInfo }): React.JSX.Element {
   return (
-    <div className="dotgrid flex h-full items-center justify-center p-8">
-      <div className="elev max-w-md rounded-lg border bg-card p-6 text-center">
-        <h1 className="text-base font-semibold tracking-tight">Nothing to compare yet</h1>
-        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          In Workspace, mark one file as A (source) and another as B (target). The receipt lists
-          every key with a class: same, changed, missing, extra, blank or ignored. Values are
-          compared as fingerprints on this machine and never shown.
-        </p>
-        <Button className="mt-4" variant="outline" size="sm" onClick={onWorkspace}>
-          Go to Workspace
-        </Button>
-      </div>
-    </div>
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <SideLabel side={{ root: file.root, project: file.project }} />
+      <span className="text-muted-foreground">·</span>
+      <span className="truncate" title={file.path}>
+        {file.rel}
+      </span>
+    </span>
   )
 }
 
 export function ReceiptPage(): React.JSX.Element {
-  const { left, right, receipt, comparing, compare, swap, error, setPage } = useWorkspace()
+  const { left, right, receipt, comparing, compare, swap, error, pick, projectResult } =
+    useWorkspace()
   const [view, setView] = useState<ReceiptView>(DEFAULT_VIEW)
   const [tab, setTab] = useState<'receipt' | 'plan'>('receipt')
   const [applying, setApplying] = useState(false)
@@ -73,31 +72,46 @@ export function ReceiptPage(): React.JSX.Element {
     return filterPlan(plan, view.query).filter((a) => keep.has(a.key))
   }, [plan, rows, view.query])
 
-  if (!left || !right) return <Empty onWorkspace={() => setPage('workspace')} />
+  // No pair yet: choose two projects (any two sources) and drill into a matched file.
+  if (!left || !right) return <ProjectCompare />
 
   const review = receipt
-    ? receipt.counts.changed + receipt.counts.missing + receipt.counts.extra + receipt.counts.blank
+    ? receipt.counts.changed +
+      receipt.counts.missing +
+      receipt.counts.extra +
+      receipt.counts.blank +
+      receipt.counts.unknown
     : 0
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
+        {projectResult && (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Back to project comparison"
+            title="Back to project comparison"
+            onClick={() => {
+              pick('left', null)
+              pick('right', null)
+            }}
+          >
+            <ArrowLeft />
+          </Button>
+        )}
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold tracking-tight">Drift receipt</h1>
           <p className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
             <span className="rounded-sm bg-primary px-1 font-semibold text-primary-foreground">
               A
             </span>
-            <span className="truncate" title={left.rel}>
-              {left.rel}
-            </span>
+            <FileLabel file={left} />
             <ArrowRight className="size-3 shrink-0" aria-label="to" />
             <span className="rounded-sm bg-primary px-1 font-semibold text-primary-foreground">
               B
             </span>
-            <span className="truncate" title={right.rel}>
-              {right.rel}
-            </span>
+            <FileLabel file={right} />
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={swap} aria-label="Swap A and B">
@@ -224,7 +238,13 @@ export function ReceiptPage(): React.JSX.Element {
               )}
             </div>
             {tab === 'plan' && plan.some((a) => a.op !== 'keep') && (
-              <Button size="sm" className="press h-7 text-xs" onClick={() => setApplying(true)}>
+              <Button
+                size="sm"
+                className="press h-7 text-xs"
+                onClick={() => setApplying(true)}
+                disabled={Boolean(applyBlocker(right.path))}
+                title={applyBlocker(right.path) ?? undefined}
+              >
                 <PenLine /> Apply to B…
               </Button>
             )}
@@ -322,10 +342,10 @@ export function ReceiptPage(): React.JSX.Element {
           </div>
 
           <p className="shrink-0 border-t bg-card px-5 py-2 text-[11px] text-muted-foreground">
-            Nothing is written until you approve an exact list of keys from the plan tab. B is
-            snapshotted first and can be rolled back from History. Extra keys on B are never
-            removed. Nothing is sent anywhere. Ignored:{' '}
-            <code className="font-mono">{DEFAULT_IGNORE.join(', ')}</code>.
+            Nothing is written until you approve an exact list of keys from the plan tab. Both sides
+            are re-read first and the write is refused if either moved. Files are snapshotted and
+            can be rolled back from History; platforms keep their own history. Extra keys on B are
+            never removed. Ignored: <code className="font-mono">{DEFAULT_IGNORE.join(', ')}</code>.
           </p>
           {applying && (
             <ApplyDialog open onOpenChange={setApplying} left={left} right={right} plan={plan} />

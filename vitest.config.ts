@@ -9,7 +9,7 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
     environment: 'node',
     // Renderer tests: add `// @vitest-environment jsdom` at the top of the file.
     setupFiles: []

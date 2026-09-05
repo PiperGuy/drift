@@ -9,6 +9,7 @@ export const STATUS_ORDER: DriftStatus[] = [
   'missing',
   'changed',
   'blank',
+  'unknown',
   'extra',
   'same',
   'ignored'

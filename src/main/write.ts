@@ -1,6 +1,17 @@
-import { parseRef, readText, statRef, writeAtomic } from './fs'
+import {
+  isReadOnlyRef,
+  parseRef,
+  providerBackendFor,
+  readEnv,
+  readText,
+  statRef,
+  writeAtomic,
+  type ProviderRef
+} from './fs'
 import { applyVault } from './providers/vault'
 import { safeStorage } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { assertPlanFresh, envShape } from './env'
 import { parseEnv, patchEnv, rawAssignment } from '@shared/env-file'
 import { formatEnv, renderAssignment } from '@shared/env-lint'
 import type {
@@ -22,6 +33,13 @@ import type { Store } from './store'
  *   4. preserves the target's mode.
  * Raw values exist here only between read and write. Nothing is logged but key names.
  */
+
+const READ_ONLY = (ref: string): string =>
+  `${parseRef(ref).kind === 'vault' ? 'Vault environments' : 'Provider sources'} are read-only here as files. ${
+    parseRef(ref).kind === 'vault'
+      ? 'Change them through Compare \u2192 Apply, or restore a version from their history.'
+      : 'Change them through Compare \u2192 Apply.'
+  }`
 
 function seal(bytes: Buffer): Buffer | null {
   return safeStorage.isEncryptionAvailable()
@@ -46,26 +64,97 @@ async function snapshot(store: Store, path: string, reason: Snapshot['reason']):
   })
 }
 
+/** Select the values to copy: skip keys absent, blank or names-only in the source. */
+function selectEntries(
+  leftText: string,
+  opaque: ReadonlySet<string>,
+  keys: string[]
+): { entries: { key: string; value: string; raw: string }[]; skipped: ApplyResult['skipped'] } {
+  const leftValues = new Map(parseEnv(leftText).map((e) => [e.key, e.value]))
+  const entries: { key: string; value: string; raw: string }[] = []
+  const skipped: ApplyResult['skipped'] = []
+  for (const key of keys) {
+    const raw = rawAssignment(leftText, key)
+    const value = leftValues.get(key)
+    if (raw === null || value === undefined) skipped.push({ key, reason: 'not in source' })
+    else if (value === '') skipped.push({ key, reason: 'blank in source' })
+    else if (opaque.has(key)) skipped.push({ key, reason: 'value not readable from source' })
+    else entries.push({ key, value, raw })
+  }
+  return { entries, skipped }
+}
+
+/**
+ * Provider targets: the adapter owns the mutation (its API, its scoping, its
+ * read-back). This function owns the plan discipline around it: a stored plan
+ * is mandatory, both sides are re-read against it, blanks and names-only values
+ * never leave main, and a shape-only snapshot records what the target looked
+ * like (provider history is the rollback path, never a file restore).
+ */
+async function applyProvider(
+  store: Store,
+  req: ApplyRequest,
+  r: ProviderRef
+): Promise<ApplyResult> {
+  if (typeof req.receipt !== 'number')
+    throw new Error(
+      `${r.provider} targets need a fresh plan: compare, then apply from the plan tab.`
+    )
+  const backend = providerBackendFor(r)
+  if (!backend.apply)
+    throw new Error(
+      `Drift cannot write to ${r.provider} environments: change values in ${r.provider} itself, then rescan.`
+    )
+  await assertPlanFresh(store, req.receipt, req.left, req.right)
+  const { text: leftText, opaque } = await readEnv(req.left)
+  const { entries, skipped } = selectEntries(leftText, opaque, req.keys)
+  if (entries.length === 0) throw new Error('Nothing to write: every key was skipped.')
+  const shape = await envShape(req.right)
+  const snapshot = store.saveSnapshot({
+    path: req.right,
+    at: Date.now(),
+    reason: 'apply',
+    mtime: req.expectedMtime,
+    size: 0,
+    keys: shape.entries.map((e) => e.key),
+    blob: null
+  })
+  const res = await backend.apply(r, {
+    entries: entries.map(({ key, value }) => ({ key, value })),
+    expectedMtime: req.expectedMtime,
+    token: randomUUID()
+  })
+  return {
+    written: res.written,
+    skipped,
+    snapshot,
+    verified: res.verified,
+    ...(res.note ? { note: res.note } : {}),
+    ...(res.version ? { version: res.version } : {})
+  }
+}
+
 export async function applyPlan(store: Store, req: ApplyRequest): Promise<ApplyResult> {
   assertGranted(req.left)
   assertGranted(req.right)
+  const target = parseRef(req.right)
+  if (target.kind === 'provider') return applyProvider(store, req, target)
+  // File and Vault targets carry their own guards (mtime, CAS); a quoted plan is checked on top.
+  if (typeof req.receipt === 'number')
+    await assertPlanFresh(store, req.receipt, req.left, req.right)
   // Vault targets are guarded by check-and-set on the version, not by mtime.
-  if (parseRef(req.right).kind === 'vault') return applyVault(store, req)
+  if (target.kind === 'vault') return applyVault(store, req)
   const st = await statRef(req.right)
   // Allow sub-millisecond jitter across filesystems, refuse a real change.
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1) {
     throw new Error(`${req.right} changed since this plan was made. Compare again, then apply.`)
   }
-  const [leftText, rightText] = await Promise.all([readText(req.left), readText(req.right)])
-  const leftValues = new Map(parseEnv(leftText).map((e) => [e.key, e.value]))
-  const assignments: { key: string; text: string }[] = []
-  const skipped: ApplyResult['skipped'] = []
-  for (const key of req.keys) {
-    const raw = rawAssignment(leftText, key)
-    if (raw === null) skipped.push({ key, reason: 'not in source' })
-    else if ((leftValues.get(key) ?? '') === '') skipped.push({ key, reason: 'blank in source' })
-    else assignments.push({ key, text: raw })
-  }
+  const [{ text: leftText, opaque }, rightText] = await Promise.all([
+    readEnv(req.left),
+    readText(req.right)
+  ])
+  const { entries, skipped } = selectEntries(leftText, opaque, req.keys)
+  const assignments = entries.map((e) => ({ key: e.key, text: e.raw }))
   if (assignments.length === 0) throw new Error('Nothing to write: every key was skipped.')
   const snap = await snapshot(store, req.right, 'apply')
   // Re-check right before the rename: sealing the snapshot took time and another
@@ -87,10 +176,7 @@ export async function formatFile(
   expectedMtime: number
 ): Promise<FormatResult> {
   assertGranted(path)
-  if (parseRef(path).kind === 'vault')
-    throw new Error(
-      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
-    )
+  if (parseRef(path).kind === 'vault' || isReadOnlyRef(path)) throw new Error(READ_ONLY(path))
   const st = await statRef(path)
   if (Math.abs(st.mtimeMs - expectedMtime) > 1)
     throw new Error(`${path} changed since it was opened. Rescan, then format.`)
@@ -112,10 +198,8 @@ export async function formatFile(
 /** Write user-typed values: update in place or append. Same guards and snapshot as apply. */
 export async function setValues(store: Store, req: SetRequest): Promise<SetResult> {
   assertGranted(req.path)
-  if (parseRef(req.path).kind === 'vault')
-    throw new Error(
-      'Vault environments are read-only here. Change them through Compare \u2192 Apply, or restore a version from their history.'
-    )
+  if (parseRef(req.path).kind === 'vault' || isReadOnlyRef(req.path))
+    throw new Error(READ_ONLY(req.path))
   const st = await statRef(req.path)
   if (Math.abs(st.mtimeMs - req.expectedMtime) > 1)
     throw new Error(`${req.path} changed since it was opened. Rescan, then edit again.`)
@@ -139,6 +223,7 @@ export async function rollback(store: Store, id: number): Promise<void> {
     throw new Error(
       'Vault environments roll back from their own version history (open the file \u2192 History), not from file snapshots.'
     )
+  if (isReadOnlyRef(s.path)) throw new Error(READ_ONLY(s.path))
   if (!s.blob)
     throw new Error('This snapshot has no content: no keyring was available when it was taken.')
   assertGranted(s.path)

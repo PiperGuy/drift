@@ -1,7 +1,8 @@
-import { baseRef, readText } from './fs'
-import { createHmac, randomBytes } from 'node:crypto'
+import { baseRef, readEnv, readText } from './fs'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
+import type { Store } from './store'
 import { parseEnv } from '@shared/env-file'
-import { compareEnv, type DriftReceipt, type KeyEntry } from '@shared/drift'
+import { compareEnv, OPAQUE_FINGERPRINT, type DriftReceipt, type KeyEntry } from '@shared/drift'
 import type { EnvShape } from '@shared/channels'
 import { assertGranted } from './workspace'
 
@@ -49,10 +50,11 @@ export function fingerprint(value: string): string {
 /** Read a granted file and return its redacted shape. Raw values die here. */
 export async function envShape(path: string): Promise<EnvShape> {
   assertGranted(path)
-  const text = await readText(path)
+  const { text, opaque } = await readEnv(path)
+  // Opacity comes from provider metadata only; the text of a value never decides it.
   const entries: KeyEntry[] = parseEnv(text).map(({ key, value }) => ({
     key,
-    fingerprint: value === '' ? null : fingerprint(value)
+    fingerprint: value === '' ? null : opaque.has(key) ? OPAQUE_FINGERPRINT : fingerprint(value)
   }))
   return { path, name: baseRef(path), entries }
 }
@@ -83,4 +85,50 @@ export async function compareFiles(
 ): Promise<DriftReceipt> {
   const [l, r] = await Promise.all([envShape(left), envShape(right)])
   return compareEnv(l, r, ignore)
+}
+
+/**
+ * Digest of the ordered pair (refs and redacted shapes). Fingerprints are keyed
+ * HMACs, so the digest says nothing about values; it only lets an apply prove
+ * that the plan was made for exactly this A -> B and that neither side moved.
+ */
+export const shapeGuard = (left: string, right: string, l: EnvShape, r: EnvShape): string =>
+  createHash('sha256')
+    .update(JSON.stringify([left, right, l.entries, r.entries]))
+    .digest('base64url')
+
+/** Compare and store the receipt with its guard; the returned receipt carries the stored id. */
+export async function compareGuarded(
+  store: Store,
+  left: string,
+  right: string,
+  ignore: string[]
+): Promise<{ receipt: DriftReceipt; guard: string }> {
+  const [l, r] = await Promise.all([envShape(left), envShape(right)])
+  const receipt = compareEnv(l, r, ignore)
+  const guard = shapeGuard(left, right, l, r)
+  const id = store.saveReceipt(receipt, guard, { left, right })
+  return { receipt: { ...receipt, id }, guard }
+}
+
+/**
+ * A plan authorizes one ordered pair. Refuse when the receipt was made for a
+ * different A or B (Apply is directional: B -> A is another plan), then re-read
+ * both sides and refuse when either shape moved since.
+ */
+export async function assertPlanFresh(
+  store: Store,
+  id: number,
+  left: string,
+  right: string
+): Promise<void> {
+  const stored = store.receiptGuard(id)
+  if (!stored) throw new Error('This plan is unknown or too old. Compare again, then apply.')
+  if (stored.left !== left || stored.right !== right)
+    throw new Error(
+      'This plan was made for a different pair (or the other direction). Compare A and B again, then apply.'
+    )
+  const [l, r] = await Promise.all([envShape(left), envShape(right)])
+  if (shapeGuard(left, right, l, r) !== stored.guard)
+    throw new Error('A or B changed since this plan was made. Compare again, then apply.')
 }

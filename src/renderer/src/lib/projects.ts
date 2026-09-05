@@ -25,6 +25,15 @@ export const KIND_TONE: Record<EnvKind, string> = {
   other: 'bg-muted text-muted-foreground border-border'
 }
 
+/**
+ * The `(no git project)` group travels as null over IPC, but a <select> value
+ * must be a string. A printable sentinel no Git directory can collide with (a
+ * project is a relative path; the scan never produces a `__…__` name).
+ */
+export const NO_PROJECT = '__drift_no_project__'
+export const toOption = (p: string | null): string => p ?? NO_PROJECT
+export const fromOption = (v: string): string | null => (v === NO_PROJECT ? null : v)
+
 export type Group = { key: string; root: string; name: string; fs: EnvFileInfo[] }
 
 /** Does a file match the workspace search: path, or a key name once the project was inspected. */

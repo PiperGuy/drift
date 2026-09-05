@@ -65,7 +65,10 @@ const MIGRATIONS: string[] = [
      secret_blob BLOB,
      created_at INTEGER NOT NULL,
      last_used_at INTEGER
-   );`
+   );`,
+  // v6: a receipt doubles as a plan. guard is a digest of both redacted shapes at compare
+  // time; an apply quoting the receipt is refused when either side's shape moved since.
+  `ALTER TABLE receipts ADD COLUMN guard TEXT;`
 ]
 
 export type ConnectionRow = {
@@ -85,18 +88,26 @@ export function openStore(file: string): {
   forgetRoot: (path: string) => void
   /** Roots of the active workspace. */
   listRoots: () => { path: string; label: string | null }[]
+  /** Every root of every workspace, for cross-source comparison. */
+  listAllRoots: () => { path: string; label: string | null; workspaceId: number }[]
   listWorkspaces: () => Workspace[]
   activeWorkspace: () => number
   setActiveWorkspace: (id: number) => void
   createWorkspace: (name: string) => Workspace
   renameWorkspace: (id: number, name: string) => void
-  /** Also deletes connections referenced by the workspace's vault roots; returns their ids. */
+  /** Also deletes connections referenced by the workspace's vault/provider roots; returns their ids. */
   deleteWorkspace: (id: number) => number[]
   touchRoot: (path: string) => void
   /** Wipes roots, receipts, events, snapshots AND provider connections; returns connection ids. */
   forgetAll: () => number[]
   clearCache: () => void
-  saveReceipt: (receipt: DriftReceipt) => number
+  /** `refs` are the exact ordered refs compared; they bind the receipt to that pair for applies. */
+  saveReceipt: (
+    receipt: DriftReceipt,
+    guard?: string,
+    refs?: { left: string; right: string }
+  ) => number
+  receiptGuard: (id: number) => { left: string; right: string; guard: string } | null
   logEvent: (kind: HistoryKind, subject: object, detail?: object) => void
   listEvents: (limit?: number) => HistoryEvent[]
   saveSnapshot: (s: Omit<Snapshot, 'id' | 'restorable'> & { blob: Buffer | null }) => number
@@ -134,6 +145,9 @@ export function openStore(file: string): {
     listRoots: db.prepare(
       'SELECT path, label FROM roots WHERE workspace_id = ? ORDER BY granted_at ASC'
     ),
+    listAllRoots: db.prepare(
+      'SELECT path, label, workspace_id FROM roots ORDER BY workspace_id ASC, granted_at ASC'
+    ),
     listWorkspaces: db.prepare(
       'SELECT w.id, w.name, (SELECT COUNT(*) FROM roots r WHERE r.workspace_id = w.id) AS roots, (SELECT path FROM roots r WHERE r.workspace_id = w.id ORDER BY granted_at ASC LIMIT 1) AS path FROM workspaces w ORDER BY w.created_at ASC'
     ),
@@ -143,8 +157,9 @@ export function openStore(file: string): {
     deleteWorkspaceRoots: db.prepare('DELETE FROM roots WHERE workspace_id = ?'),
     touchRoot: db.prepare('UPDATE roots SET last_scan_at = ? WHERE path = ?'),
     insertReceipt: db.prepare(
-      'INSERT INTO receipts (left_ref, right_ref, created_at, rows_json, counts_json) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO receipts (left_ref, right_ref, created_at, rows_json, counts_json, guard) VALUES (?, ?, ?, ?, ?, ?)'
     ),
+    receiptGuard: db.prepare('SELECT left_ref, right_ref, guard FROM receipts WHERE id = ?'),
     insertEvent: db.prepare(
       'INSERT INTO events (at, kind, subject_json, detail_json) VALUES (?, ?, ?, ?)'
     ),
@@ -171,14 +186,14 @@ export function openStore(file: string): {
 
   const active = (): number => Number(q.getMeta.get('active_workspace')?.['value'] ?? 1)
 
-  /** Connection ids referenced by vault:// roots — of one workspace, or of every workspace. */
-  const vaultConnIds = (workspaceId?: number): number[] => {
+  /** Connection ids referenced by vault:// and provider roots — of one workspace, or of every workspace. */
+  const connIds = (workspaceId?: number): number[] => {
     const rows = (
       workspaceId === undefined
         ? (db.prepare('SELECT path FROM roots').all() as { path: string }[])
         : (q.listRoots.all(workspaceId) as { path: string }[])
     ).map((r) => parseRef(r.path))
-    return rows.flatMap((r) => (r.kind === 'vault' ? [r.connectionId] : []))
+    return rows.flatMap((r) => ('connectionId' in r ? [r.connectionId] : []))
   }
 
   return {
@@ -190,6 +205,10 @@ export function openStore(file: string): {
       (q.listRoots.all(active()) as { path: string; label: string | null }[]).map((r) => ({
         ...r
       })),
+    listAllRoots: () =>
+      (q.listAllRoots.all() as { path: string; label: string | null; workspace_id: number }[]).map(
+        (r) => ({ path: r.path, label: r.label, workspaceId: Number(r.workspace_id) })
+      ),
     listWorkspaces: () =>
       (
         q.listWorkspaces.all() as { id: number; name: string; roots: number; path: string | null }[]
@@ -203,7 +222,7 @@ export function openStore(file: string): {
     renameWorkspace: (id, name) => void q.renameWorkspace.run(name, id),
     deleteWorkspace: (id) => {
       // A root's credentials must not outlive the root (Codex review P1).
-      const ids = vaultConnIds(id)
+      const ids = connIds(id)
       for (const c of ids) q.deleteConnection.run(c)
       q.deleteWorkspaceRoots.run(id)
       q.deleteWorkspace.run(id)
@@ -213,7 +232,7 @@ export function openStore(file: string): {
     // Wipes everything except the fingerprint key, so old receipts stay comparable if re-run.
     // Connections go too: a sealed token must never outlive "Forget data" (Codex review P1).
     forgetAll: () => {
-      const ids = vaultConnIds()
+      const ids = connIds()
       db.exec(
         'DELETE FROM roots; DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history; DELETE FROM connections;'
       )
@@ -221,16 +240,22 @@ export function openStore(file: string): {
     },
     clearCache: () =>
       db.exec('DELETE FROM receipts; DELETE FROM events; DELETE FROM file_history;'),
-    saveReceipt: (r) =>
+    saveReceipt: (r, guard, refs) =>
       Number(
         q.insertReceipt.run(
-          r.left,
-          r.right,
+          refs?.left ?? r.left,
+          refs?.right ?? r.right,
           Date.now(),
           JSON.stringify(r.rows),
-          JSON.stringify(r.counts)
+          JSON.stringify(r.counts),
+          guard ?? null
         ).lastInsertRowid
       ),
+    receiptGuard: (id) => {
+      const r = q.receiptGuard.get(id) as
+        { left_ref: string; right_ref: string; guard: string | null } | undefined
+      return r?.guard ? { left: r.left_ref, right: r.right_ref, guard: r.guard } : null
+    },
     logEvent: (kind, subject, detail = {}) =>
       void q.insertEvent.run(Date.now(), kind, JSON.stringify(subject), JSON.stringify(detail)),
     listEvents: (limit = 200) =>

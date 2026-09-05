@@ -41,8 +41,11 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
+# releaseType must stay `release`: release-please publishes the GitHub release
+# (with the changelog) before release.yml builds, and electron-builder refuses
+# to upload into an existing published release when its own type is `draft`.
 publish:
   provider: github
   owner: PiperGuy
   repo: drift
-  releaseType: draft
+  releaseType: release

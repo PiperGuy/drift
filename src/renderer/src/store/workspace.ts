@@ -2,9 +2,15 @@ import { create } from 'zustand'
 import { toast } from 'sonner'
 import type { DriftReceipt } from '@shared/drift'
 import type {
+  DockerSourceSpec,
   EnvFileInfo,
+  PairReceipt,
+  ProjectCompareResult,
+  ProjectSide,
+  ProviderConnectSpec,
   RootInfo,
   ScanResult,
+  SourceRoot,
   VaultSourceSpec,
   Workspace
 } from '@shared/channels'
@@ -29,7 +35,9 @@ export type PageId = (typeof PAGES)[number]
 export type SourceSpec =
   | { kind: 'local'; name: string }
   | { kind: 'ssh'; name: string; host: string; path: string }
+  | ({ kind: 'docker'; name: string } & DockerSourceSpec)
   | ({ kind: 'vault' } & VaultSourceSpec)
+  | { kind: 'provider'; name: string; spec: ProviderConnectSpec }
   | { kind: 'rename'; name: string }
 
 export type KeySummary = { keys: number; blank: number; names: { key: string; blank: boolean }[] }
@@ -90,6 +98,19 @@ type State = {
   deleteWorkspace: (id: number) => Promise<void>
   /** Granted roots: local folders and ssh://host/path. */
   roots: RootInfo[]
+  /** Every root of every source (metadata only), for cross-source comparison and labels. */
+  allRoots: SourceRoot[]
+  /** Source label for any root, active or not. */
+  labelFor: (root: string) => string
+  /** Cross-source project comparison: the two chosen sides and the last result. */
+  projectSides: { left: ProjectSide | null; right: ProjectSide | null }
+  projectResult: ProjectCompareResult | null
+  projectComparing: boolean
+  pickProjectSide: (side: 'left' | 'right', s: ProjectSide | null) => void
+  /** Scan both projects fresh, pair their environment files and compare each pair. */
+  compareProjects: () => Promise<void>
+  /** Drill into one pair: it becomes the A/B receipt. */
+  openPair: (pair: PairReceipt) => void
   /** Files from every root, merged. `scan.root` is '' when several roots are granted. */
   scan: ScanResult | null
   scanning: boolean
@@ -114,8 +135,12 @@ type State = {
   /** Rename the active source and, if the root changed, swap it. */
   updateSource: (req: SourceSpec) => Promise<void>
   addSsh: (host: string, path: string) => Promise<void>
+  /** Verify with docker exec, then grant a container directory. */
+  addDocker: (spec: DockerSourceSpec) => Promise<RootInfo>
   /** Preflight + connect a Vault source; the credential goes to main once and never returns. */
   addVault: (spec: VaultSourceSpec) => Promise<RootInfo>
+  /** Preflight + connect a read-only provider; tokens go to main once and never return. */
+  addProvider: (spec: ProviderConnectSpec) => Promise<RootInfo>
   removeRoot: (path: string) => Promise<void>
   rescan: () => Promise<void>
   openProject: (project: string | null) => Promise<void>
@@ -177,8 +202,11 @@ export const useWorkspace = create<State>((set, get) => ({
   workspaces: [],
   workspace: 1,
   loadWorkspaces: async () => {
-    const { active, all } = await window.plumbr.listWorkspaces()
-    set({ workspaces: all, workspace: active })
+    const [{ active, all }, allRoots] = await Promise.all([
+      window.plumbr.listWorkspaces(),
+      window.plumbr.rootsAll()
+    ])
+    set({ workspaces: all, workspace: active, allRoots })
   },
   switchWorkspace: async (id) => {
     if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
@@ -192,6 +220,8 @@ export const useWorkspace = create<State>((set, get) => ({
       left: null,
       right: null,
       receipt: null,
+      projectSides: { left: null, right: null },
+      projectResult: null,
       error: null,
       viewerDirty: false,
       openFile: null,
@@ -217,6 +247,41 @@ export const useWorkspace = create<State>((set, get) => ({
     if (wasActive) await get().switchWorkspace(get().workspace)
   },
   roots: [],
+  allRoots: [],
+  labelFor: (root) => get().allRoots.find((r) => r.path === root)?.label ?? root,
+  projectSides: { left: null, right: null },
+  projectResult: null,
+  projectComparing: false,
+  pickProjectSide: (side, s) =>
+    set((st) => ({ projectSides: { ...st.projectSides, [side]: s }, projectResult: null })),
+  compareProjects: async () => {
+    const { left, right } = get().projectSides
+    if (!left || !right) return
+    set({ projectComparing: true, error: null })
+    try {
+      const projectResult = await window.plumbr.projectCompare({ left, right })
+      const now = get()
+      if (now.projectSides.left !== left || now.projectSides.right !== right) return
+      // The open pair may come from a source the rescan does not cover (inactive source):
+      // re-point it at the fresh metadata (mtime/version) so the next apply quotes the truth.
+      const pair = projectResult.pairs.find(
+        (p) => p.left.path === now.left?.path && p.right.path === now.right?.path
+      )
+      set(pair ? { projectResult, left: pair.left, right: pair.right } : { projectResult })
+    } catch (e) {
+      set({ error: message(e) })
+    } finally {
+      set({ projectComparing: false })
+    }
+  },
+  openPair: (pair) =>
+    set({
+      left: pair.left,
+      right: pair.right,
+      receipt: pair.receipt,
+      error: null,
+      page: 'receipt'
+    }),
   scan: null,
   scanning: false,
   error: null,
@@ -260,6 +325,8 @@ export const useWorkspace = create<State>((set, get) => ({
       left: null,
       right: null,
       receipt: null,
+      projectSides: { left: null, right: null },
+      projectResult: null,
       error: null,
       page: 'workspace'
     }),
@@ -285,17 +352,26 @@ export const useWorkspace = create<State>((set, get) => ({
       req.name.trim() ||
       (req.kind === 'ssh'
         ? `${req.host}:${req.path}`
-        : req.kind === 'vault'
-          ? `vault:${req.path}`
-          : 'New source')
+        : req.kind === 'docker'
+          ? `${req.container}:${req.path}`
+          : req.kind === 'vault'
+            ? `vault:${req.path}`
+            : req.kind === 'provider'
+              ? req.spec.provider
+              : 'New source')
     const w = await window.plumbr.createWorkspace(name)
     await get().loadWorkspaces()
     await get().switchWorkspace(w.id)
     try {
       if (req.kind === 'ssh') {
         await get().addSsh(req.host, req.path)
+      } else if (req.kind === 'docker') {
+        await get().addDocker(req)
       } else if (req.kind === 'vault') {
         const root = await get().addVault(req)
+        if (!req.name.trim()) await get().renameWorkspace(w.id, root.label)
+      } else if (req.kind === 'provider') {
+        const root = await get().addProvider(req.spec)
         if (!req.name.trim()) await get().renameWorkspace(w.id, root.label)
       } else {
         const ok = await get().grant()
@@ -331,9 +407,16 @@ export const useWorkspace = create<State>((set, get) => ({
         await get().addSsh(req.host, req.path)
         if (old) await get().removeRoot(old.path)
       }
-    } else if (req.kind === 'vault') {
+    } else if (req.kind === 'docker') {
+      const next = `docker://${req.host ?? ''}/${req.container}${req.path.replace(/\/+$/, '') || '/'}`
+      if (old?.path !== next) {
+        await get().addDocker(req)
+        if (old) await get().removeRoot(old.path)
+      }
+    } else if (req.kind === 'vault' || req.kind === 'provider') {
       // Reconnect: a fresh connection replaces the old root (and its stored credential).
-      await get().addVault(req)
+      if (req.kind === 'vault') await get().addVault(req)
+      else await get().addProvider(req.spec)
       if (old) await get().removeRoot(old.path)
     } else if (req.kind === 'local') {
       // The caller passes kind 'local' only when the user chose a different directory.
@@ -351,6 +434,28 @@ export const useWorkspace = create<State>((set, get) => ({
     }))
     void get().loadWorkspaces()
     await get().rescan()
+  },
+
+  addDocker: async (spec) => {
+    const root = await window.plumbr.addDockerRoot(spec)
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    void get().loadWorkspaces()
+    await get().rescan()
+    return root
+  },
+
+  addProvider: async (spec) => {
+    const { root, summary, warnings } = await window.plumbr.providerConnect(spec)
+    set((s) => ({
+      roots: s.roots.some((r) => r.path === root.path) ? s.roots : [...s.roots, root]
+    }))
+    toast.success(`Connected ${root.label}`, { description: summary })
+    if (warnings.length) toast.warning('Connection notes', { description: warnings.join(' ') })
+    void get().loadWorkspaces()
+    await get().rescan()
+    return root
   },
 
   addVault: async (spec) => {
@@ -421,10 +526,14 @@ export const useWorkspace = create<State>((set, get) => ({
       set({ scan })
       // Selections may point at files that no longer exist.
       // Re-point the pair at the fresh metadata (mtime/size) or drop files that vanished.
+      // A side from another source (cross-source pair) is not in this scan and is kept as is.
       const byPath = new Map(scan.files.map((f) => [f.path, f]))
+      const active = new Set(roots.map((r) => r.path))
+      const repoint = (f: EnvFileInfo | null): EnvFileInfo | null =>
+        f && active.has(f.root) ? (byPath.get(f.path) ?? null) : f
       const { left, right } = get()
-      const l = left ? (byPath.get(left.path) ?? null) : null
-      const r = right ? (byPath.get(right.path) ?? null) : null
+      const l = repoint(left)
+      const r = repoint(right)
       if ((left && !l) || (right && !r)) set({ left: l, right: r, receipt: null })
       else set({ left: l, right: r })
       await get().openProject(keep)

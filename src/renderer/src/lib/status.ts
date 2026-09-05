@@ -38,6 +38,12 @@ export const STATUS_META: Record<
     hint: 'Key present but empty on at least one side',
     tone: 'text-muted-foreground bg-muted border-border'
   },
+  unknown: {
+    glyph: '?',
+    label: 'unknown',
+    hint: 'Present on both sides; this provider returns the name only, so the value cannot be compared',
+    tone: 'text-muted-foreground bg-muted border-border'
+  },
   ignored: {
     glyph: '·',
     label: 'ignored',

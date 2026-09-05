@@ -113,6 +113,7 @@ function PairSlot({
   file: EnvFileInfo | null
   clear: () => void
 }): React.JSX.Element {
+  const labelFor = useWorkspace((s) => s.labelFor)
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <span
@@ -128,7 +129,8 @@ function PairSlot({
       </span>
       {file ? (
         <>
-          <span className="truncate font-mono text-xs" title={file.rel}>
+          <span className="truncate font-mono text-xs" title={file.path}>
+            <span className="text-muted-foreground">{labelFor(file.root)} · </span>
             {file.rel}
           </span>
           <Button size="icon-xs" variant="ghost" aria-label={`Clear ${side}`} onClick={clear}>
@@ -146,9 +148,16 @@ function PairSlot({
 
 /** Appears only once something is ticked; Compare needs two. */
 function PairBar(): React.JSX.Element {
-  const { left, right, pick, swap, setPage } = useWorkspace()
+  const { left, right, pick, swap, setPage, labelFor } = useWorkspace()
+  const label = (f: EnvFileInfo | null): string =>
+    f ? `${labelFor(f.root)} · ${f.project ?? UNGROUPED} · ${f.rel}` : ''
   return (
-    <div className="enter flex h-14 shrink-0 items-center gap-3 border-t bg-card px-5">
+    <div
+      className="enter flex h-14 shrink-0 items-center gap-3 border-t bg-card px-5"
+      title={[left && `A: ${label(left)}`, right && `B: ${label(right)}`]
+        .filter(Boolean)
+        .join('\n')}
+    >
       <PairSlot side="A" file={left} clear={() => pick('left', null)} />
       <Button
         size="icon-xs"
@@ -183,7 +192,7 @@ function PairBar(): React.JSX.Element {
   )
 }
 
-/** Right-click menu on a file row: compare, open, and the two roadmap actions. */
+/** Right-click menu on a file row: compare, open, sync to another source, and the share roadmap item. */
 function RowMenu({
   file,
   children,
@@ -193,7 +202,7 @@ function RowMenu({
   children: React.ReactNode
   onOpen: () => void
 }): React.JSX.Element {
-  const { left, right, pick, setPage } = useWorkspace()
+  const { left, right, pick, setPage, pickProjectSide } = useWorkspace()
   const isL = left?.path === file.path
   const isR = right?.path === file.path
   const item =
@@ -228,9 +237,18 @@ function RowMenu({
             </ContextMenu.Item>
           )}
           <ContextMenu.Separator className="my-1 h-px bg-border" />
-          <ContextMenu.Item className={item} disabled>
-            <Upload className="size-3.5" /> Sync to a platform…
-            <span className="ml-auto font-mono text-[9px] tracking-wide uppercase">soon</span>
+          <ContextMenu.Item
+            className={item}
+            onSelect={() => {
+              // This file is A; the Compare page asks for the other source's project as B.
+              pick('left', file)
+              pick('right', null)
+              pickProjectSide('left', { root: file.root, project: file.project })
+              pickProjectSide('right', null)
+              setPage('receipt')
+            }}
+          >
+            <Upload className="size-3.5" /> Sync to another source…
           </ContextMenu.Item>
           <ContextMenu.Item className={item} disabled>
             <Link2 className="size-3.5" /> Share with a link…

@@ -38,12 +38,12 @@ Three processes, one trust boundary. The renderer is a sandboxed web page. The m
 
 ## 2. Process model and security boundary
 
-| Process       | Trust                   | Owns                                                                             | Never                                                  |
-| ------------- | ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Renderer      | untrusted (web content) | UI, view state                                                                   | file system, network, credentials, raw values          |
-| Preload       | trusted, tiny           | `window.plumbr` bridge                                                           | logic, imports beyond `electron` and `shared/channels` |
-| Main          | trusted                 | discovery, parsing, fingerprints, SQLite, safeStorage, provider HTTP, MCP socket | send a raw value to the renderer or a log              |
-| MCP companion | semi-trusted, read-only | stdio MCP server for agents                                                      | values, sync execution                                 |
+| Process       | Trust                   | Owns                                                                                | Never                                                  |
+| ------------- | ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Renderer      | untrusted (web content) | UI, view state                                                                      | file system, network, credentials, raw values          |
+| Preload       | trusted, tiny           | `window.plumbr` bridge                                                              | logic, imports beyond `electron` and `shared/channels` |
+| Main          | trusted                 | discovery, parsing, fingerprints, SQLite, safeStorage, provider HTTP, MCP socket    | send a raw value to the renderer or a log              |
+| MCP companion | semi-trusted            | stdio MCP server for agents; relays source/plan/apply calls to main over the bridge | values, credentials, its own writes                    |
 
 Flags already set: `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, strict CSP, external links to system browser, in-app navigation blocked, path allow-list of granted roots.
 
@@ -73,7 +73,9 @@ ignore_rules (project_id, key)                                       -- default 
 
 -- redacted shapes and comparisons
 snapshots    (id, env_file_id, taken_at, keys_json)  -- [{key, fingerprint|null}] never values
-receipts     (id, left_ref, right_ref, created_at, rows_json, counts_json)
+receipts     (id, left_ref, right_ref, created_at, rows_json, counts_json, guard)
+             -- guard: sha256 of both redacted shapes at compare time; an apply quotes the receipt id and
+             --        main refuses when either side's shape moved since (the plan is the contract)
 
 -- integrations
 connections  (id, provider, label, config_json, secret_blob BLOB, created_at, last_used_at)
@@ -96,13 +98,13 @@ meta         (key, value)  -- schema_version, install_id, fingerprint_key_ref
 
 ### 3.2 Keys and secrets at rest
 
-| Secret                                                                     | Where                                                                                  | Notes                                                                                                                                                                         |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fingerprint HMAC key                                                       | random 32 bytes at first run, `safeStorage.encryptString` → `meta.fingerprint_key_ref` | Per install, so fingerprints are stable across launches (history and receipts stay comparable) but useless off-machine. Today it is per session. Change when the store lands. |
-| Provider tokens (GitHub, Vercel, Railway, Render, Dokploy, Coolify, Vault) | `connections.secret_blob` via `safeStorage`                                            | Decrypted in memory only for the duration of one provider call.                                                                                                               |
-| AWS                                                                        | not stored                                                                             | Standard credential chain: profiles, SSO, env. The app only stores the profile name and region.                                                                               |
-| Encrypted file snapshots (opt-in)                                          | `file_history.blob` via `safeStorage`                                                  | Off by default. Needed only for rollback of contents.                                                                                                                         |
-| Share link key                                                             | nowhere                                                                                | URL fragment only.                                                                                                                                                            |
+| Secret                                                                     | Where                                                                                   | Notes                                                                                                                                                                         |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fingerprint HMAC key                                                       | random 32 bytes at first run, `safeStorage.encryptString` → `meta.fingerprint_key_ref`  | Per install, so fingerprints are stable across launches (history and receipts stay comparable) but useless off-machine. Today it is per session. Change when the store lands. |
+| Provider tokens (GitHub, Vercel, Railway, Render, Dokploy, Coolify, Vault) | main-process Map for the session; `connections.secret_blob` via `safeStorage` on opt-in | Session-only by default. Sealed only when the user ticks the keyring box and `safeStorage` is available. Dropped with the source, the workspace or Forget data.               |
+| AWS                                                                        | not stored                                                                              | Standard credential chain: profiles, SSO, env. The app only stores the profile name and region.                                                                               |
+| Encrypted file snapshots (opt-in)                                          | `file_history.blob` via `safeStorage`                                                   | Off by default. Needed only for rollback of contents.                                                                                                                         |
+| Share link key                                                             | nowhere                                                                                 | URL fragment only.                                                                                                                                                            |
 
 `safeStorage.isEncryptionAvailable()` false (no keyring on Linux, locked session): the app refuses to persist secrets and offers session-only connections instead. It never falls back to plaintext.
 
@@ -114,37 +116,44 @@ Explicit lock: an app-level lock clears in-memory decrypted material. Unlock use
 
 Folder picker → root recorded → walk with skip list → `env_files` upsert (metadata only) → group by nearest `.git`. Rescan is user-initiated. Later: opt-in `fs.watch` on granted roots, debounced, still metadata-only.
 
-### 4.2 Receipt (done for local files)
+### 4.2 Receipt (done)
 
-Two refs (file or provider mapping) → main reads both sides → parse → HMAC fingerprints → `compareEnv` → rows and counts → stored in `receipts`, shown in UI. Provider side uses the adapter's `read`.
+Two refs (any two sources) → main reads both sides → parse → HMAC fingerprints → `compareEnv` → rows and counts → stored in `receipts` with a guard (digest of both shapes), shown in UI with the receipt id.
 
-### 4.3 Approved sync (todo)
+**Project comparison** (`src/main/compare.ts`, `src/shared/pairing.ts`): two `{ root, project }` sides → each root is granted for the session if it is a remembered root of any source (never anything else) → both projects scanned fresh → files paired by _identity_ = the file's path inside its project directory (`envIdentity` strips the longest leading run of segments that is a suffix of the project label, so `apps/api/.env.production`, Vercel `.env.production` and Railway `api/.env.production` meet) → one guarded receipt per pair, files only one side has listed, an identity shared by several files on one side reported as ambiguous and never paired. Opening a pair makes it the ordinary A/B receipt.
 
-Receipt → `planSync` → approval dialog shows exact source, exact target, per-key ops → user approves → main re-reads both sides, aborts with `changed_since_plan` if either fingerprint set moved → adapter `apply` per key → per-key result → re-read target → `verified | partial | failed` → event row. No scheduler, no bulk propagation, no auto-retry that writes.
+### 4.3 Approved sync (done)
 
-### 4.4 Local file write (todo)
+Receipt → `planSync` → approval dialog shows source · project · file on both sides, per-key ops and the platform consequence → user confirms once → `applyPlan` (`src/main/write.ts`): the quoted receipt's guard is recomputed from fresh reads of both sides and the apply is refused if either moved → values are selected from the re-read source (blank, absent and names-only keys skipped) → file targets: mtime guard + snapshot + atomic rename; Vault: CAS; provider targets: shape-only snapshot, then the adapter's `apply` (re-read of the target, its own staleness check on the provider timestamp/version, write through the documented API in order with **no retry**, read-back) → `ApplyResult { written, skipped, verified, note }` → event row with key names, counts, plan id and `verified`. No scheduler, no bulk propagation, no auto-retry that writes, no automatic creation or deletion of target environments.
 
-Same as 4.3 with the file adapter: write to a temp sibling, fsync, rename. Preserve comments and ordering where possible. Never overwrite a file whose mtime or shape changed since the plan.
+### 4.4 Local file write (done)
 
-### 4.5 History and rollback (todo)
+Same as 4.3 with the file adapter: write to a temp sibling, rename. Comments and ordering preserved. Never overwrite a file whose mtime changed since the plan.
 
-Every action appends an event. Every compare stores a redacted snapshot. Rollback of contents is available only if the user turned on encrypted file snapshots for that project.
+### 4.5 History and rollback (done)
 
-## 5. Provider adapters
+Every action appends an event. Every compare stores a redacted receipt. File snapshots are sealed with the OS keyring before every file write; provider applies record key names only (the platform's own version history is the rollback path).
 
-One interface, one folder per provider in `src/main/providers/`:
+## 5. Provider adapters (as built)
+
+Every source is a _ref_ string and every read in main goes through one seam, `src/main/fs.ts`: a local path, `ssh://host/path`, `docker://[host]/container/path`, `vault://conn/mount/path`, or `<provider>://<connectionId>/<target>` for the API providers. Adapters live one folder per provider under `src/main/providers/` and register a backend:
 
 ```ts
-interface Provider {
-  id: 'github' | 'vercel' | 'railway' | 'render' | 'dokploy' | 'coolify' | 'aws-sm' | 'vault'
-  test(conn): Promise<void> // auth check, no writes
-  listTargets(conn): Promise<Target[]> // repos, projects, services, secrets, paths
-  read(conn, target): Promise<KeyEntry[]> // names + fingerprints where values are readable
-  apply(conn, target, plan): Promise<ApplyResult> // per-key outcome, only from the approval dialog
+type ProviderBackend = {
+  scan(root, ref): Promise<ScanResult> // targets → environment "files" (metadata only, no values fetched)
+  readText(ref): Promise<string> // canonical KEY=value text; values exist only inside this call
+  stat(ref): Promise<Stat> // provider timestamp where the API has one
+  apply?(ref, { entries, expectedMtime, token }): Promise<{ written; verified; note?; version? }>
+  // approved values only, re-read the target first, documented API, no retry, read back
 }
+// plus, per provider: connect(store, spec) → preflight, connection row, root
 ```
 
-All HTTP happens in main with `fetch`. Custom CA support (Dokploy, Coolify) via `undici` `Agent` with the user-supplied PEM from `config_json`. GitHub secret writes use libsodium sealed boxes with the repository public key (`libsodium-wrappers` or `tweetnacl` + `tweetnacl-sealedbox-js`, both pure JS). AWS via `@aws-sdk/client-secrets-manager` with the default chain.
+Rendering to `.env` text (`providers/envtext.ts`) is what lets the existing parser, fingerprinting, receipts, viewer and reveal work unchanged. A key a provider reports by name only (GitHub secrets, Vercel `sensitive`, ECS `secrets`) is rendered with a stand-in value; `envShape` turns it into the `unknown` fingerprint, `compareEnv` classifies it as `unknown` (never `same`/`changed`), and `applyPlan` skips it.
+
+Shared pieces: `providers/http.ts` (plain `node:https`, custom CA via `Agent({ ca })`, typed `ProviderError` per branch, cursor/page helper), `providers/connection.ts` (session-token map, `safeStorage` opt-in sealing, drop-on-remove), `providers/writekit.ts` (apply entries in order with no retry and an error that names what already landed; read-back verdicts). Vault keeps its own client (check-and-set). AWS adapters use `@aws-sdk/client-secrets-manager` (`PutSecretValue` with a unique `ClientRequestToken`, `DescribeSecret` staging labels to detect a concurrent writer) and `@aws-sdk/client-ecs` (`RegisterTaskDefinition` from the described definition minus its read-only fields, `UpdateService` only after a re-check) with `fromNodeProviderChain({ profile })`; ECS Exec mode shells out to `aws ecs execute-command` as an argument array, wraps the container-side output in markers + base64 to survive the pty, and never writes (those files die with the task). GitHub secrets are sealed with `libsodium-wrappers` (`crypto_box_seal`, pinned) against the scope's public key. Docker is a transport variant of SSH inside `fs.ts` (`docker exec <container> sh -c <script>`), not a provider: it reads and writes files.
+
+Per-platform write limits (what the API cannot do, stated in the UI instead of faked): GitHub secret values and Vercel `sensitive` values cannot be read back (presence only); new GitHub organization entries need a visibility Drift cannot choose; Vercel `system` variables and ECS keys sourced from `secrets` are refused by name; Railway, Render and Dokploy carry no per-variable version, so the plan guard is their staleness check. The MCP server never writes itself: its `apply_sync` asks main to run the same `applyPlan` for a plan main created.
 
 ## 6. What can and cannot be fully local
 
@@ -159,7 +168,7 @@ All HTTP happens in main with `fetch`. Custom CA support (Dokploy, Coolify) via 
 | Platform sync to GitHub, Vercel, Railway, Render, Dokploy, Coolify | The app calls each provider's public API with the user's own token from the user's machine. No Plumbr middleman. |
 | AWS Secrets Manager, Vault KV v2                                   | Same, using the local AWS credential chain or a Vault token.                                                     |
 | Credential storage                                                 | `safeStorage` + SQLite. OS keychain provides the key.                                                            |
-| MCP for coding agents                                              | Local stdio process talking to the app over a local socket.                                                      |
+| MCP for coding agents                                              | Local stdio process; source, compare, plan and apply calls go to the app over a local authenticated socket.      |
 | Biometric unlock                                                   | OS APIs.                                                                                                         |
 | Tray / menu-bar mode                                               | Electron `Tray`.                                                                                                 |
 | Light and dark, offline use                                        | Nothing leaves the machine. Core features need no network at all.                                                |
@@ -181,7 +190,12 @@ Team RBAC, org-wide audit, hosted source of truth, scheduled sync, telemetry. Th
 
 ## 7. MCP companion
 
-`plumbr-mcp` binary bundled with the app (or `npx plumbr-mcp`), stdio transport via `@modelcontextprotocol/sdk`. It connects to the running app over a local socket (`\\.\pipe\plumbr` on Windows, `$XDG_RUNTIME_DIR/plumbr.sock` or userData on macOS/Linux) with a per-install token the app writes to a 0600 file. Tools: `list_projects`, `list_env_files`, `compare_environment`, `get_drift_summary`, `create_sync_plan`. No `get_secret`, no file read, no shell, no apply. If the app is not running the companion returns a clear "open Plumbr Env" error.
+`mcp.js` is bundled with the app and run under the app binary with `ELECTRON_RUN_AS_NODE=1`, stdio transport via `@modelcontextprotocol/sdk`. Two groups of tools:
+
+- `list_projects`, `env_status`, `compare_env`, `dry_run_plan` read the folder, SSH and Docker roots of the active workspace directly (SQLite opened read-only for the root list, the same granted-root allow-list as main). They work with the app closed.
+- `list_sources`, `compare_projects`, `create_sync_plan`, `apply_sync` are answered by the running app over the **bridge** (`src/main/bridge.ts`): a Unix socket in userData (a random named pipe on Windows) plus a 256-bit token, fresh per launch, written to `userData/bridge.json` with mode 0600 and unlinked on quit. The companion reads the file next to the database it was given; the token is never in a client config, a prompt or a tool result. One JSON line per connection, constant-time token check, size and read timeouts, zod-validated params.
+
+Request model on the bridge: a source root exactly as remembered in Drift plus a relative env-file path (or a project name). Main refuses absolute paths and `..`, resolves only against roots in the store, and requires the file to be one the scan found. `create_sync_plan` runs `compareGuarded` (receipt bound to the ordered refs and both redacted shapes), takes the target's mtime or Vault version like the desktop Apply dialog, and keeps the plan in main memory under an opaque id for 15 minutes, single use. `request_sync_approval` takes `plan_id` and the exact ordered keys (add/update/review keys of that plan, each once), shows a native `dialog.showMessageBox` on the app window naming source, target, keys and consequence, and only the "Write" button mints a 256-bit approval token kept in main memory for 5 minutes, bound to that plan, direction and key list; Cancel, Escape and closing the dialog return an error. `apply_sync` takes `plan_id`, the same keys and that token, consumes the token before anything is read (a failed write cannot be replayed), re-checks both roots are still remembered, then calls `applyPlan`, so the file, Vault and provider guards, the snapshot and the audit event are identical to a desktop apply. Responses carry key names, classes, counts, snapshot and version ids. No `get_secret`, no file read, no shell. With the app closed, locked, MCP switched off, or a source removed, those tools fail closed with an "open Drift" error; there is no fallback that reads credentials from disk.
 
 ## 8. Threat model in one paragraph
 

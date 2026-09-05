@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 import { PRODUCT } from '@shared/product'
+import { rootKind, WRITE_CONSEQUENCE } from '@/lib/sources'
+import { FileLabel } from '@/pages/Receipt'
 
 const OP: Record<SyncAction['op'], { glyph: string; tone: string; on: boolean }> = {
   add: { glyph: '+', tone: 'text-ok', on: true },
@@ -46,7 +48,10 @@ export function ApplyDialog({
   )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { rescan, compare, noteWritten } = useWorkspace()
+  const { rescan, compare, noteWritten, receipt, projectResult, compareProjects, labelFor } =
+    useWorkspace()
+  const kind = rootKind(right.path)
+  const remote = kind !== 'local' && kind !== 'ssh' && kind !== 'docker' && kind !== 'vault'
 
   const toggle = (k: string): void =>
     setChosen((s) => {
@@ -65,28 +70,38 @@ export function ApplyDialog({
         right: right.path,
         keys: [...chosen],
         expectedMtime: right.modifiedAt,
-        expectedVersion: right.version
+        expectedVersion: right.version,
+        receipt: receipt?.id
       })
       noteWritten(r.written.length)
       const skippedLine = r.skipped.length
         ? `Skipped ${r.skipped.map((s) => `${s.key} (${s.reason})`).join(', ')}`
         : null
-      toast.success(
-        `Wrote ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${right.rel}`,
-        {
-          description: r.version
-            ? [
-                `Vault v${r.version.base} → v${r.version.next}${r.verified ? ' · verified by read-back' : ' · read-back could not verify'}`,
-                skippedLine
-              ]
-                .filter(Boolean)
-                .join(' — ')
-            : (skippedLine ?? 'Snapshot taken first. Roll back from History.')
-        }
-      )
+      const where = `${labelFor(right.root)} · ${right.rel}`
+      const description = [
+        r.version && kind === 'vault'
+          ? `Vault v${r.version.base} → v${r.version.next}${r.verified ? ' · verified by read-back' : ' · read-back could not verify'}`
+          : null,
+        r.note ?? null,
+        skippedLine,
+        !remote && kind !== 'vault' ? 'Snapshot taken first. Roll back from History.' : null
+      ]
+        .filter(Boolean)
+        .join(' — ')
+      if (r.verified === false)
+        toast.warning(
+          `Wrote ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${where}, not fully verified`,
+          { description, duration: 12_000 }
+        )
+      else
+        toast.success(
+          `Wrote ${r.written.length} key${r.written.length === 1 ? '' : 's'} to ${where}`,
+          { description }
+        )
       onOpenChange(false)
-      // Files changed on disk: refresh metadata, then the receipt.
+      // The target changed: refresh metadata, the project comparison if one is open, then the receipt.
       await rescan()
+      if (projectResult) await compareProjects()
       await compare()
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^.*Error: /, '') : String(e))
@@ -100,12 +115,13 @@ export function ApplyDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <PenLine className="size-4 text-lemon-ink" /> Write to {right.rel}
+            <PenLine className="size-4 text-lemon-ink" /> Write to {labelFor(right.root)} ·{' '}
+            {right.rel}
           </DialogTitle>
           <DialogDescription className="flex items-center gap-1.5 font-mono text-xs">
-            <span className="truncate">{left.rel}</span>
+            <FileLabel file={left} />
             <ArrowRight className="size-3 shrink-0" />
-            <span className="truncate">{right.rel}</span>
+            <FileLabel file={right} />
           </DialogDescription>
         </DialogHeader>
 
@@ -148,10 +164,15 @@ export function ApplyDialog({
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-lemon-ink" aria-hidden="true" />
           <span>
-            The ticked keys are copied from {left.name} exactly as written there. {PRODUCT} takes a
-            snapshot of {right.name} first and won&apos;t write if the file changed in the meantime.
-            Keys that only exist in {right.name} are left alone, and so are comments and ordering.
+            {remote
+              ? `The ticked values are read from ${left.name} again right before the write; blank and names-only values are never sent. ${PRODUCT} re-reads B too and refuses if either side moved since this plan. `
+              : `The ticked keys are copied from ${left.name} exactly as written there. ${PRODUCT} takes a snapshot of ${right.name} first and won\u2019t write if the file changed in the meantime. `}
+            Keys that only exist in {right.name} are left alone.
           </span>
+        </p>
+        <p className="rounded-md border border-lemon-ink/30 bg-lemon-soft/40 px-3 py-2 text-xs">
+          <span className="font-medium">What this does on {labelFor(right.root)}: </span>
+          {WRITE_CONSEQUENCE[kind]}
         </p>
         {error && (
           <p

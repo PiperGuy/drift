@@ -1,6 +1,6 @@
 import { test } from 'vitest'
 import assert from 'node:assert/strict'
-import { compareEnv, planSync, toMcpContext } from './drift'
+import { compareEnv, planSync, toMcpContext, OPAQUE_FINGERPRINT } from './drift'
 
 const staging = {
   name: '.env.staging',
@@ -40,6 +40,7 @@ test('compareEnv classifies every key and sorts deterministically', () => {
     missing: 1,
     extra: 1,
     blank: 1,
+    unknown: 0,
     ignored: 1
   })
   assert.equal(receipt.clean, false)
@@ -77,7 +78,39 @@ test('toMcpContext exposes key names and classes only, values redacted', () => {
     extra: ['REDIS_URL'],
     changed: ['STRIPE_KEY'],
     blank: ['SENTRY_DSN'],
+    unknown: [],
     values: 'redacted'
   })
   assert.ok(!JSON.stringify(ctx).includes('a1'), 'fingerprints must not leak')
+})
+
+test('opaque values: a provider that returns names only yields "unknown", never same/changed', () => {
+  const r = compareEnv(
+    {
+      name: 'a',
+      entries: [
+        { key: 'K', fingerprint: 'fp1' },
+        { key: 'GONE', fingerprint: 'x' }
+      ]
+    },
+    {
+      name: 'b',
+      entries: [
+        { key: 'K', fingerprint: OPAQUE_FINGERPRINT },
+        { key: 'ONLY', fingerprint: OPAQUE_FINGERPRINT }
+      ]
+    }
+  )
+  assert.deepEqual(r.rows, [
+    { key: 'GONE', status: 'missing' },
+    { key: 'K', status: 'unknown' },
+    { key: 'ONLY', status: 'extra' }
+  ])
+  assert.equal(r.counts.unknown, 1)
+  assert.equal(r.clean, false)
+  assert.deepEqual(
+    planSync(r).find((a) => a.key === 'K'),
+    { key: 'K', op: 'review', reason: 'value not readable on one side' }
+  )
+  assert.deepEqual(toMcpContext(r).unknown, ['K'])
 })
