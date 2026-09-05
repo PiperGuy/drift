@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import assert from 'node:assert/strict'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { PlumbrApi } from '@shared/channels'
 import { AddSourceDialog } from './AddSourceDialog'
-import { VAULT_GUIDE_LABEL } from './VaultGuide'
+import { HOVER_CLOSE_MS, VAULT_GUIDE_LABEL } from './VaultGuide'
 import { useWorkspace } from '@/store/workspace'
 
 // The dialog only needs the ssh alias lookup at mount; nothing here submits.
@@ -17,7 +17,10 @@ const plumbr = {
 beforeEach(() => {
   window.plumbr = plumbr
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 function openVault(): void {
   render(<AddSourceDialog onClose={() => {}} />)
@@ -32,6 +35,13 @@ const guide = (): HTMLElement | null => screen.queryByRole('dialog', { name: VAU
 const closed = (): Promise<void> => waitFor(() => assert.ok(!guide()))
 
 test('vault guide: hover and keyboard focus reveal it, leaving hides it', async () => {
+  // Fake timers: the close delay is a real setTimeout, and waiting it out on
+  // the clock flakes under load (the 150 ms close and waitFor's 1 s budget can
+  // both expire in one starved event-loop stall, so the check runs before
+  // React flushes the close). Advancing the clock is deterministic and also
+  // pins the grace period that lets the pointer travel into the popover.
+  vi.useFakeTimers()
+  const tick = (ms: number): Promise<void> => act(() => vi.advanceTimersByTimeAsync(ms))
   openVault()
   const btn = guideButton()
   assert.equal(btn.getAttribute('aria-expanded'), 'false')
@@ -41,13 +51,18 @@ test('vault guide: hover and keyboard focus reveal it, leaving hides it', async 
   assert.ok(guide())
   assert.equal(btn.getAttribute('aria-expanded'), 'true')
   fireEvent.pointerLeave(btn)
-  await closed()
+  await tick(HOVER_CLOSE_MS - 1)
+  assert.ok(guide()) // still open: the pointer may be on its way into the popover
+  await tick(1)
+  assert.ok(!guide())
 
   fireEvent.focus(btn)
   assert.ok(guide())
   fireEvent.blur(btn)
-  await closed()
-})
+  await tick(HOVER_CLOSE_MS)
+  assert.ok(!guide())
+  // First mount of the full dialog costs ~2s in jsdom; room for a loaded box.
+}, 30_000)
 
 test('vault guide: click pins it open, click again or Escape closes it', async () => {
   openVault()

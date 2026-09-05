@@ -11,10 +11,17 @@ import { parse } from 'yaml'
  */
 
 const DIR = join(__dirname, '..', '.github', 'workflows')
-type Step = { uses?: string; run?: string; with?: Record<string, unknown>; if?: string }
+type Step = {
+  uses?: string
+  run?: string
+  with?: Record<string, unknown>
+  if?: string
+  env?: Record<string, string>
+}
 type Job = {
   'runs-on'?: string
   permissions?: Record<string, string>
+  if?: string
   steps: Step[]
   strategy?: { matrix?: { include?: Record<string, string>[] } }
 }
@@ -111,6 +118,62 @@ describe('release.yml', () => {
     const rows = jobs(wf).flatMap((j) => j.strategy?.matrix?.include ?? [])
     expect(rows.map((r) => r.os).sort()).toEqual(['macos-latest', 'ubuntu-latest'])
   })
+
+  it('uploads into the published release that release-please created, re-runs included', () => {
+    // A `releaseType: draft` publisher refuses an existing published release,
+    // and without EP_GH_IGNORE_TIME a re-run >2h after publishing silently
+    // skips the upload (electron-publish gitHubPublisher.getOrCreateRelease).
+    const eb = parse(readFileSync(join(__dirname, '..', 'electron-builder.yml'), 'utf8')) as {
+      publish: { provider: string; releaseType: string }
+    }
+    expect(eb.publish.releaseType).toBe('release')
+    const publish = steps(wf).find((s) => s.run?.includes('--publish onTagOrDraft'))
+    expect(publish?.env?.EP_GH_IGNORE_TIME).toBe('true')
+  })
+})
+
+describe('release-please.yml', () => {
+  const wf = load('release-please.yml')
+
+  it('runs only on pushes to main', () => {
+    expect(wf.on).toEqual({ push: { branches: ['main'] } })
+  })
+
+  it('uses the release-please action at the pinned major, manifest-driven', () => {
+    const step = steps(wf).find((s) => s.uses?.startsWith('googleapis/release-please-action'))
+    expect(step?.uses).toBe('googleapis/release-please-action@v4')
+    // Manifest mode (config files in the repo), not an inline release-type.
+    expect(step?.with?.['release-type']).toBeUndefined()
+  })
+
+  it('scopes write permissions per job instead of workflow-wide', () => {
+    expect(wf.permissions).toBeUndefined()
+    const perms = jobs(wf).map((j) => j.permissions)
+    // What the action itself documents as required: release PR + tag/release + labels.
+    expect(perms).toContainEqual({
+      contents: 'write',
+      'pull-requests': 'write',
+      issues: 'write'
+    })
+    // The hand-off job may only start other workflows.
+    expect(perms).toContainEqual({ actions: 'write' })
+  })
+
+  it('hands the new tag to the existing release workflow, only once one exists', () => {
+    // A GITHUB_TOKEN-created tag does not fire `on: push: tags`, so the tag is
+    // handed to release.yml via workflow_dispatch — the one event that works.
+    const job = jobs(wf).find((j) =>
+      j.steps.some((s) => s.run?.includes('gh workflow run release.yml'))
+    )
+    expect(job).toBeDefined()
+    expect(job?.if).toContain('release_created')
+    expect(JSON.stringify(job)).toContain('tag_name')
+  })
+
+  it('builds nothing and publishes nothing itself', () => {
+    const all = runs(wf).join('\n')
+    expect(all).not.toMatch(/npm publish|electron-builder|npm run build/)
+  })
 })
 
 describe('every workflow', () => {
@@ -135,7 +198,8 @@ describe('every workflow', () => {
         'actions/checkout': 'v4',
         'actions/setup-node': 'v4',
         'actions/upload-artifact': 'v4',
-        'actions/cache': 'v4'
+        'actions/cache': 'v4',
+        'googleapis/release-please-action': 'v4'
       }
       if (action in expected) expect(`${action}@${version}`).toBe(`${action}@${expected[action]}`)
     }

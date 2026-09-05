@@ -1,7 +1,10 @@
 name: Release
-# Tag push (npm run release:patch|minor|major) builds macOS and Linux and
-# uploads the installers to a draft GitHub Release named after the tag.
-# Windows is deliberately not built. workflow_dispatch builds without
+# Builds macOS and Linux installers for a vX.Y.Z tag and uploads them to the
+# GitHub Release with that tag. Normally started by release-please.yml, which
+# dispatches this workflow at the tag it just created (its release already
+# exists and the assets are attached to it). A manually pushed v* tag works
+# too; then electron-builder creates the release itself. Windows is
+# deliberately not built. workflow_dispatch from a branch builds without
 # publishing; installers land as run artifacts.
 on:
   push:
@@ -37,6 +40,9 @@ jobs:
       - run: npm run ${{ matrix.script }} -- --publish onTagOrDraft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Without this, a build re-run >2h after release-please published the
+          # release would silently skip the upload (electron-publish 2h window).
+          EP_GH_IGNORE_TIME: 'true'
           # Signing is optional: unset secrets yield unsigned builds, set ones sign + notarize.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}

@@ -62,7 +62,7 @@ npm run build:mac | build:win | build:linux   # installers via electron-builder
 ```
 
 `build:win` is a local-only convenience; no automated workflow builds or publishes
-Windows — it is intentionally unavailable (see “CI, main-branch artifacts and releasing”).
+Windows — it is intentionally unavailable (see “Versioning and releases”).
 
 On a headless Linux box, run the E2E suite under a virtual display:
 `xvfb-run -a npm run test:e2e`. Details and prerequisites: [docs/e2e.md](docs/e2e.md).
@@ -154,7 +154,7 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 - Never send a raw value over IPC, log one, or put one in an error message. Fingerprints are HMAC-SHA256 with a per-session random key.
 - Never commit secrets. `.env*` is ignored.
 
-## CI, main-branch artifacts and releasing
+## CI and main-branch artifacts
 
 **Every PR and push to main** runs `.github/workflows/ci.yml`: the full quality gate
 (`npm ci`, typecheck, lint, prettier, unit tests, build) plus the desktop E2E suite
@@ -171,21 +171,56 @@ published anywhere else):
 These main-branch builds are always **unsigned**. **Windows is intentionally not
 built or published** by any automated workflow.
 
-```bash
-npm run release:patch   # or release:minor / release:major
-```
+The intent of every workflow is guarded by `tests/workflows.test.ts`, and the
+version-management setup by `tests/versioning.test.ts`.
 
-`npm version` bumps `package.json`, commits `release: vX.Y.Z` and pushes the tag. The
-tag triggers `.github/workflows/release.yml`, which runs `npm run check` and builds on
-macOS and Linux only, then attaches the installers (`.dmg`, `.zip`, `.AppImage`,
-`.deb`) to a **draft** GitHub Release. Review the draft and publish it. Builds are
-unsigned until these repository secrets exist, after which the same workflow signs and
-notarizes with no other change: `CSC_LINK` + `CSC_KEY_PASSWORD` (Developer ID Application .p12,
-base64), `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` (notarization).
-Unsigned: macOS users open via right-click → Open the first time.
-`Actions → Release → Run workflow` builds the current branch without
-publishing; installers are attached to the run as artifacts.
-The intent of all three workflows is guarded by `tests/workflows.test.ts`.
+## Versioning and releases
+
+Versioning is automated with [Release Please](https://github.com/googleapis/release-please-action)
+(`.github/workflows/release-please.yml`; config in `release-please-config.json` and
+`.release-please-manifest.json`). Nothing is ever published to npm, and **Windows
+remains intentionally unavailable** — no release builds or ships it.
+
+**Lifecycle.** Ordinary merges to main do not each get a version. Release Please
+reads the conventional commits that landed on main and keeps a single **release PR**
+open (updating it as more merges arrive) with the next SemVer version written into
+`package.json` and `package-lock.json`, and the notes prepended to `CHANGELOG.md`.
+**Merging that release PR is the release**: Release Please creates the `vX.Y.Z` tag
+and the GitHub release with the changelog as its notes, then dispatches
+`.github/workflows/release.yml` at that tag (a tag created with the workflow token
+cannot fire `on: push: tags` itself, so the dispatch is explicit). `release.yml`
+runs `npm run check`, builds macOS and Linux only, and attaches `.dmg`, `.zip`,
+`.AppImage` and `.deb` to that same release — one release, with the version bump
+committed before anything builds, so installers embed the version they claim.
+Signing works as before: unsigned until `CSC_LINK` + `CSC_KEY_PASSWORD` (macOS
+Developer ID .p12, base64) and `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` +
+`APPLE_TEAM_ID` (notarization) exist as repository secrets, after which the same
+workflow signs and notarizes with no other change. Unsigned macOS builds open via
+right-click → Open the first time.
+
+**Commit types decide the bump.** Write conventional commits on main (with squash
+merges, the PR title is the commit):
+
+| Bump      | When                                                                                                                                      | Syntax and example                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **patch** | Backwards-compatible bug and security fixes, and docs/build fixes that matter to users                                                    | `fix: refuse Vault writes when the CAS version moved`                                           |
+| **minor** | New backwards-compatible, user-visible capability                                                                                         | `feat: add Render environment groups as a source`                                               |
+| **major** | Breaking change to user workflow, config or store format, the MCP/tool contracts, supported platforms, or anything that needs a migration | `feat!: seal share links with per-recipient keys`, or any type with a `BREAKING CHANGE:` footer |
+
+`chore:`, `docs:`, `refactor:`, `test:` and `ci:` commits merge normally but do not
+force a release on their own; they ride along in the next one. Plain SemVer applies
+even below 1.0, so mark a commit breaking only when you mean the major bump.
+
+**Emergency manual release** (only when the automation itself is broken): in one
+reviewed PR, set the same version in `package.json`, `package-lock.json` **and**
+`.release-please-manifest.json` (they must stay equal — `tests/versioning.test.ts`
+enforces it, and a drifted manifest would make Release Please re-release the wrong
+version). Merge it, then run `git tag vX.Y.Z && git push origin vX.Y.Z` — a tag
+pushed with your own credentials triggers `release.yml` directly, and
+electron-builder creates the GitHub release itself. There is deliberately no npm
+script that versions or pushes tags from a laptop.
+`Actions → Release → Run workflow` on a branch still builds without publishing;
+installers are attached to the run as artifacts.
 
 ## Sources and the sidebar
 

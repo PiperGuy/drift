@@ -31,10 +31,7 @@
     "test:e2e": "electron-vite build && npm run build:mcp && playwright test",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "ui:add": "shadcn add",
-    "postinstall": "electron-builder install-app-deps",
-    "release:patch": "npm version patch -m 'release: v%s' && git push --follow-tags",
-    "release:minor": "npm version minor -m 'release: v%s' && git push --follow-tags",
-    "release:major": "npm version major -m 'release: v%s' && git push --follow-tags"
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1126.0",

@@ -92,7 +92,7 @@ const STEPS: { field: string; body: React.ReactNode }[] = [
 export const VAULT_GUIDE_LABEL = 'How to find these values'
 
 /** Delay before a hover-opened guide closes, so the pointer can cross into it. */
-const HOVER_CLOSE_MS = 150
+export const HOVER_CLOSE_MS = 150
 
 export function VaultGuide({ className }: { className?: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
