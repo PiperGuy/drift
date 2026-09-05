@@ -38,12 +38,12 @@ Three processes, one trust boundary. The renderer is a sandboxed web page. The m
 
 ## 2. Process model and security boundary
 
-| Process       | Trust                   | Owns                                                                             | Never                                                  |
-| ------------- | ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Renderer      | untrusted (web content) | UI, view state                                                                   | file system, network, credentials, raw values          |
-| Preload       | trusted, tiny           | `window.plumbr` bridge                                                           | logic, imports beyond `electron` and `shared/channels` |
-| Main          | trusted                 | discovery, parsing, fingerprints, SQLite, safeStorage, provider HTTP, MCP socket | send a raw value to the renderer or a log              |
-| MCP companion | semi-trusted, read-only | stdio MCP server for agents                                                      | values, sync execution                                 |
+| Process       | Trust                   | Owns                                                                                | Never                                                  |
+| ------------- | ----------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Renderer      | untrusted (web content) | UI, view state                                                                      | file system, network, credentials, raw values          |
+| Preload       | trusted, tiny           | `window.plumbr` bridge                                                              | logic, imports beyond `electron` and `shared/channels` |
+| Main          | trusted                 | discovery, parsing, fingerprints, SQLite, safeStorage, provider HTTP, MCP socket    | send a raw value to the renderer or a log              |
+| MCP companion | semi-trusted            | stdio MCP server for agents; relays source/plan/apply calls to main over the bridge | values, credentials, its own writes                    |
 
 Flags already set: `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, strict CSP, external links to system browser, in-app navigation blocked, path allow-list of granted roots.
 
@@ -153,7 +153,7 @@ Rendering to `.env` text (`providers/envtext.ts`) is what lets the existing pars
 
 Shared pieces: `providers/http.ts` (plain `node:https`, custom CA via `Agent({ ca })`, typed `ProviderError` per branch, cursor/page helper), `providers/connection.ts` (session-token map, `safeStorage` opt-in sealing, drop-on-remove), `providers/writekit.ts` (apply entries in order with no retry and an error that names what already landed; read-back verdicts). Vault keeps its own client (check-and-set). AWS adapters use `@aws-sdk/client-secrets-manager` (`PutSecretValue` with a unique `ClientRequestToken`, `DescribeSecret` staging labels to detect a concurrent writer) and `@aws-sdk/client-ecs` (`RegisterTaskDefinition` from the described definition minus its read-only fields, `UpdateService` only after a re-check) with `fromNodeProviderChain({ profile })`; ECS Exec mode shells out to `aws ecs execute-command` as an argument array, wraps the container-side output in markers + base64 to survive the pty, and never writes (those files die with the task). GitHub secrets are sealed with `libsodium-wrappers` (`crypto_box_seal`, pinned) against the scope's public key. Docker is a transport variant of SSH inside `fs.ts` (`docker exec <container> sh -c <script>`), not a provider: it reads and writes files.
 
-Per-platform write limits (what the API cannot do, stated in the UI instead of faked): GitHub secret values and Vercel `sensitive` values cannot be read back (presence only); new GitHub organization entries need a visibility Drift cannot choose; Vercel `system` variables and ECS keys sourced from `secrets` are refused by name; Railway, Render and Dokploy carry no per-variable version, so the plan guard is their staleness check. The MCP server never gets a write tool.
+Per-platform write limits (what the API cannot do, stated in the UI instead of faked): GitHub secret values and Vercel `sensitive` values cannot be read back (presence only); new GitHub organization entries need a visibility Drift cannot choose; Vercel `system` variables and ECS keys sourced from `secrets` are refused by name; Railway, Render and Dokploy carry no per-variable version, so the plan guard is their staleness check. The MCP server never writes itself: its `apply_sync` asks main to run the same `applyPlan` for a plan main created.
 
 ## 6. What can and cannot be fully local
 
@@ -168,7 +168,7 @@ Per-platform write limits (what the API cannot do, stated in the UI instead of f
 | Platform sync to GitHub, Vercel, Railway, Render, Dokploy, Coolify | The app calls each provider's public API with the user's own token from the user's machine. No Plumbr middleman. |
 | AWS Secrets Manager, Vault KV v2                                   | Same, using the local AWS credential chain or a Vault token.                                                     |
 | Credential storage                                                 | `safeStorage` + SQLite. OS keychain provides the key.                                                            |
-| MCP for coding agents                                              | Local stdio process talking to the app over a local socket.                                                      |
+| MCP for coding agents                                              | Local stdio process; source, compare, plan and apply calls go to the app over a local authenticated socket.      |
 | Biometric unlock                                                   | OS APIs.                                                                                                         |
 | Tray / menu-bar mode                                               | Electron `Tray`.                                                                                                 |
 | Light and dark, offline use                                        | Nothing leaves the machine. Core features need no network at all.                                                |
@@ -190,7 +190,12 @@ Team RBAC, org-wide audit, hosted source of truth, scheduled sync, telemetry. Th
 
 ## 7. MCP companion
 
-`plumbr-mcp` binary bundled with the app (or `npx plumbr-mcp`), stdio transport via `@modelcontextprotocol/sdk`. It connects to the running app over a local socket (`\\.\pipe\plumbr` on Windows, `$XDG_RUNTIME_DIR/plumbr.sock` or userData on macOS/Linux) with a per-install token the app writes to a 0600 file. Tools: `list_projects`, `list_env_files`, `compare_environment`, `get_drift_summary`, `create_sync_plan`. No `get_secret`, no file read, no shell, no apply. If the app is not running the companion returns a clear "open Plumbr Env" error.
+`mcp.js` is bundled with the app and run under the app binary with `ELECTRON_RUN_AS_NODE=1`, stdio transport via `@modelcontextprotocol/sdk`. Two groups of tools:
+
+- `list_projects`, `env_status`, `compare_env`, `dry_run_plan` read the folder, SSH and Docker roots of the active workspace directly (SQLite opened read-only for the root list, the same granted-root allow-list as main). They work with the app closed.
+- `list_sources`, `compare_projects`, `create_sync_plan`, `apply_sync` are answered by the running app over the **bridge** (`src/main/bridge.ts`): a Unix socket in userData (a random named pipe on Windows) plus a 256-bit token, fresh per launch, written to `userData/bridge.json` with mode 0600 and unlinked on quit. The companion reads the file next to the database it was given; the token is never in a client config, a prompt or a tool result. One JSON line per connection, constant-time token check, size and read timeouts, zod-validated params.
+
+Request model on the bridge: a source root exactly as remembered in Drift plus a relative env-file path (or a project name). Main refuses absolute paths and `..`, resolves only against roots in the store, and requires the file to be one the scan found. `create_sync_plan` runs `compareGuarded` (receipt bound to the ordered refs and both redacted shapes), takes the target's mtime or Vault version like the desktop Apply dialog, and keeps the plan in main memory under an opaque id for 15 minutes, single use. `request_sync_approval` takes `plan_id` and the exact ordered keys (add/update/review keys of that plan, each once), shows a native `dialog.showMessageBox` on the app window naming source, target, keys and consequence, and only the "Write" button mints a 256-bit approval token kept in main memory for 5 minutes, bound to that plan, direction and key list; Cancel, Escape and closing the dialog return an error. `apply_sync` takes `plan_id`, the same keys and that token, consumes the token before anything is read (a failed write cannot be replayed), re-checks both roots are still remembered, then calls `applyPlan`, so the file, Vault and provider guards, the snapshot and the audit event are identical to a desktop apply. Responses carry key names, classes, counts, snapshot and version ids. No `get_secret`, no file read, no shell. With the app closed, locked, MCP switched off, or a source removed, those tools fail closed with an "open Drift" error; there is no fallback that reads credentials from disk.
 
 ## 8. Threat model in one paragraph
 

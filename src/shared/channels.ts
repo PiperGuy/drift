@@ -67,7 +67,9 @@ export type SourceRoot = RootInfo & { workspace: number; workspaceName: string }
  * API providers. Each is `<id>://<connectionId>/<target>` as a root and file
  * ref; the adapter lives in src/main/providers/<id>. Reads render `.env` text;
  * writes go through the adapter's `apply` behind the plan flow (never through a
- * file write), and the MCP server cannot read or write them.
+ * file write). The MCP process never touches them directly: an agent reaches
+ * them only through the app's bridge (src/main/bridge.ts), which runs the same
+ * plan flow.
  */
 export const PROVIDERS = [
   'ecs',

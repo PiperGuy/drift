@@ -12,8 +12,8 @@ Docs: [Features](docs/features.md) (everything the site promises, with status) a
 
 - **Local-first.** Discovery, parsing and comparison run on the user's machine. There is no Plumbr server in the loop for core features.
 - **Files stay where they are.** Never move, copy or rewrite a `.env*` unless the user approves an exact plan.
-- **Redacted by default.** Values never leave the main process. Receipts, plans, the UI and MCP see key names, session fingerprints and classes only.
-- **Every sync is human-approved.** No scheduler, no unattended write path. MCP cannot execute a sync.
+- **Redacted by default.** Values never leave the main process. Receipts, plans and the UI see key names, session fingerprints and classes; MCP sees key names, classes and counts only.
+- **Every sync is human-approved.** No scheduler, no unattended write path. An agent syncs only through a reviewed plan, a native confirmation dialog the user clicks in the app, and a separate apply call the app itself executes.
 - **Least privilege.** Main only reads paths under a root the user picked in the OS folder dialog. Renderer is sandboxed and talks to main through one typed bridge.
 
 ## Stack
@@ -77,7 +77,7 @@ The website promises these. Everything below is either done, in progress or on t
 | Share links instead of Slack  | Link that expires by time or view count. Sealed on device before it leaves, revocable. Recipient decrypts in the browser, no account.                    | todo                                                                                                                                                                                                                                                                                                                                                                                               |
 | Platform sync, human-approved | GitHub Actions, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager, HashiCorp Vault KV v2. One reviewed plan at a time. Read back for drift. | done: every platform is a source AND a target (Vault CAS-guarded; GitHub, Vercel, Railway, Render, Dokploy, Coolify, AWS Secrets Manager and ECS services through each platform's own API) behind one plan → confirm → re-read → write → read-back flow. Cross-source project comparison pairs environment files by path. See "Writing to platforms" for what each platform can and cannot confirm |
 | Native desktop app            | Menu-bar app for macOS, Windows, Linux. Biometric unlock where the OS supports it. No server to run.                                                     | shell done, tray/biometrics todo                                                                                                                                                                                                                                                                                                                                                                   |
-| MCP for coding agents         | Local MCP server: key names, mismatch classes, dry-run plans. Never values. Cannot execute a sync.                                                       | todo                                                                                                                                                                                                                                                                                                                                                                                               |
+| MCP for coding agents         | Local MCP server: sources, cross-source project compare, sync plans and an explicit apply, all as key names, classes and counts. Never values.           | done: bundled stdio server; read tools work alone, source/plan/apply tools are answered by the running app over a local authenticated bridge                                                                                                                                                                                                                                                       |
 | Light and dark mode           | Same lemon accent as the site.                                                                                                                           | done                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## Todo
@@ -133,8 +133,8 @@ Order is a suggestion. Each item should land with a vitest test where there is l
 
 ### Milestone 5: Agents and polish
 
-- [ ] Local MCP server (`@modelcontextprotocol/sdk`, stdio): tools for receipts, mismatch context and dry-run plans, read-only, no values
-- [ ] One-click MCP config for Claude Code and Cursor
+- [x] Local MCP server (`@modelcontextprotocol/sdk`, stdio): receipts, cross-source compare, plans and an explicit apply, no values
+- [x] One-click MCP config for Claude Code and Cursor
 - [ ] Biometric unlock (Touch ID via `systemPreferences.promptTouchID`, Windows Hello via `safeStorage` prompt) for revealing values or approving syncs
 - [ ] Auto-update via electron-updater and GitHub releases, code signing and notarization
 - [ ] Onboarding that explains what is and is not read, in the same words as the site
@@ -177,7 +177,7 @@ theme, licence, agents, the audit log with snapshots, and data.
 ## Roots: several folders, and servers over SSH
 
 Workspace → **Add source** opens the source picker. Every entry is live: Local folder, SSH server, EC2 instance (SSH), Docker container, ECS container, AWS Secrets Manager, HashiCorp Vault KV v2, GitHub Actions, Vercel, Railway, Render, Dokploy and Coolify. Folders, SSH, EC2 and Docker are file sources (read, compare, edit, format, apply). Vault is read + check-and-set write. The rest are read-only (see the next section).
-A Vault source points at one KV v2 secret (one environment) or a folder of them (each leaf becomes an environment). Connect runs a preflight (health, token, mount version, capabilities); reads render redacted shapes; every write is a reviewed, check-and-set-guarded new version, and the file header's History button compares and restores versions. Tokens stay in memory for the session unless you opt into the OS keyring. The MCP server deliberately cannot read Vault sources (credentials never leave the app).
+A Vault source points at one KV v2 secret (one environment) or a folder of them (each leaf becomes an environment). Connect runs a preflight (health, token, mount version, capabilities); reads render redacted shapes; every write is a reviewed, check-and-set-guarded new version, and the file header's History button compares and restores versions. Tokens stay in memory for the session unless you opt into the OS keyring. The MCP server never holds Vault credentials: an agent reaches a Vault source only through the running app's bridge, which reads and writes on its behalf.
 **Compare across sources.** Compare (⌘/Ctrl+2) with no pair ticked shows the project picker: a source and a
 project/directory on each side, from any two sources. Drift scans both fresh, pairs environment files by
 their path inside the project (`apps/api/.env.production` ↔ Vercel `.env.production` ↔ Railway
@@ -204,7 +204,7 @@ string.
 ECS, AWS Secrets Manager, GitHub Actions, Vercel, Railway, Render, Dokploy and Coolify connect
 from the main process with your own credentials, straight to the provider (no Plumbr service, no
 proxy, no polling). Connect runs a preflight, then each source scans into environment "files"
-whose contents are rendered `KEY=value` text, so receipts, the viewer, reveal and MCP-free
+whose contents are rendered `KEY=value` text, so receipts, the viewer, reveal and cross-source
 compare all work unchanged. They are not edited as files (the viewer hides Format / Edit / Add key);
 the one write path is Receipt → plan → **Apply to B…**, described under "Writing to platforms".
 Tokens live in memory for the session; tick the keyring box to seal one
@@ -296,16 +296,33 @@ key names, counts, the plan id and whether the read-back verified.
 
 The app bundles a stdio MCP server (`out/main/mcp.js`) that runs under the app binary with
 `ELECTRON_RUN_AS_NODE=1`, so nothing else needs installing. Open **Agents** in the app and copy
-the one-liner for Claude Code or the JSON for Cursor and friends. Tools: `list_projects`,
-`env_status`, `compare_env`, `dry_run_plan`. It reads only the workspace granted in the app,
-returns key names and drift classes, never values, and has no write or sync tool. It can read
-folder, SSH and Docker sources; Vault and provider sources need credentials that stay in the app,
-so it refuses those with a clear message.
+the one-liner for Claude Code or the JSON for Cursor and friends.
+
+Two groups of tools, one rule: the agent sees key names, drift classes, counts and opaque ids.
+Never a value, a fingerprint, a token or raw file text.
+
+- **Read tools that work on their own:** `list_projects`, `env_status`, `compare_env`,
+  `dry_run_plan`. They read the folder, SSH and Docker roots of the active workspace directly.
+- **Tools the running app answers:** `list_sources` (every source in every workspace, platforms
+  and Vault included), `compare_projects` (two projects from any two sources, paired by env-file
+  path, like the desktop project picker), `create_sync_plan` (one ordered file pair, returns an
+  opaque `plan_id` with key names and actions), `request_sync_approval` (the app shows a native
+  dialog naming source, target and the exact keys; only the user's click mints a one-use approval
+  token) and `apply_sync` (writes those keys with that token). These go over a local bridge: a Unix socket (named pipe on Windows) plus a fresh
+  per-launch token, both in the app's data folder with owner-only permissions, never in the client
+  config and never returned by a tool. The app resolves roots only against sources it remembers,
+  refuses absolute paths and `..`, re-reads both sides against the plan before writing, and applies
+  through the same `applyPlan` path as the desktop, so every file, Vault and platform safeguard
+  holds. Plans are single use and expire after 15 minutes; the approval token is random, lives
+  only in the app's memory for 5 minutes, is bound to the plan, its direction and the ordered key
+  list, and is consumed before anything is read, so an agent (prompt-injected or not) can ask for
+  a dialog but cannot write without the human click. If the app is closed, locked or a source was
+  removed, those tools fail closed with a message that says to open the app.
 
 ## Licensing and trial
 
 Every install gets a 7-day trial, tracked in the local store. After that the window locks and
-main refuses every data IPC (the MCP server refuses tool calls too) until a key is entered in
+main refuses every data IPC (the MCP server and its bridge refuse tool calls too) until a key is entered in
 Settings → License. Keys are offline, Ed25519-signed, verified against the public key in
 `src/shared/license-pubkey.ts`. Nothing is sent anywhere.
 

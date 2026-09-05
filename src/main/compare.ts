@@ -1,8 +1,40 @@
-import type { ProjectCompareRequest, ProjectCompareResult, ProjectSide } from '@shared/channels'
+import type {
+  ProjectCompareRequest,
+  ProjectCompareResult,
+  ProjectSide,
+  RootInfo
+} from '@shared/channels'
 import { pairFiles } from '@shared/pairing'
 import { compareGuarded } from './env'
+import { parseRef } from './fs'
+import { isPrefixSource } from './providers/aws/sm'
 import type { Store } from './store'
 import { grantRoot, isGranted, scanWorkspace } from './workspace'
+
+/** A root as the UI and the MCP bridge describe it: path, kind and a human label. */
+export const toRoot = (store: Store, path: string, label: string | null): RootInfo => {
+  const r = parseRef(path)
+  const fallback = (): string => {
+    switch (r.kind) {
+      case 'ssh':
+        return `${r.host}:${r.path}`
+      case 'docker':
+        return `${r.container}${r.host ? `@${r.host}` : ''}:${r.path}`
+      case 'vault':
+        return `${r.mount}/${r.path}`
+      case 'provider':
+        return `${r.provider}:${r.path || r.connectionId}`
+      default:
+        return path
+    }
+  }
+  return {
+    path,
+    kind: r.kind === 'provider' ? r.provider : r.kind,
+    label: label ?? fallback(),
+    ...(isPrefixSource(store, path) ? { prefix: true as const } : {})
+  }
+}
 
 /**
  * Cross-source comparison: two projects, from any two remembered sources,

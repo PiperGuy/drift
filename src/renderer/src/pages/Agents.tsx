@@ -12,7 +12,27 @@ const TOOLS = [
     'compare_env',
     'Drift receipt between two files: same, changed, missing, extra, blank, ignored.'
   ],
-  ['dry_run_plan', 'What an approved sync would do per key: add, update, keep, review.']
+  ['dry_run_plan', 'What an approved sync would do per key: add, update, keep, review.'],
+  [
+    'list_sources',
+    'Every source in every workspace, platforms and Vault included: roots, projects, env-file names. Needs the app open.'
+  ],
+  [
+    'compare_projects',
+    'Two projects from any two sources, paired by env-file path, with per-pair drift counts. Needs the app open.'
+  ],
+  [
+    'create_sync_plan',
+    'One file on source A against one on source B: an opaque plan id, key names and actions. Nothing is written.'
+  ],
+  [
+    'request_sync_approval',
+    'Asks you, in a dialog here, to approve exactly those keys. Your click mints a one-use token; Cancel gives the agent nothing.'
+  ],
+  [
+    'apply_sync',
+    'Writes the approved keys with that token, inside the app, with the same guards as Apply here. Never without your click.'
+  ]
 ] as const
 
 const q = (s: string): string => (/[\s"]/.test(s) ? JSON.stringify(s) : s)
@@ -43,7 +63,7 @@ function Snippet({ label, code }: { label: string; code: string }): React.JSX.El
   )
 }
 
-/** MCP for coding agents: read-only, redacted, local stdio. The server ships inside the app. */
+/** MCP for coding agents: redacted, local stdio; syncs run inside the app over its local bridge. */
 export function AgentsPage(): React.JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
   useEffect(() => {
@@ -77,8 +97,9 @@ export function AgentsPage(): React.JSX.Element {
       <div className="mx-auto max-w-2xl space-y-6 p-6">
         <p className="text-sm leading-relaxed text-muted-foreground">
           Connect Claude Code, Cursor or any other MCP client to {PRODUCT}. The agent can list your
-          env files, see which keys differ between environments and get a plan. It never gets a
-          value, and it can&apos;t change a file. The server runs on this machine, inside the app.
+          sources, see which keys differ between projects and environments, get a plan and, after
+          you approve it, ask {PRODUCT} to apply it. It never gets a value: every read and write
+          happens inside this app, and sync tools only work while the app is open.
         </p>
 
         <section className="space-y-3">

@@ -94,7 +94,7 @@ export type ProviderRef = Extract<Ref, { kind: 'provider' }>
 /**
  * Adapters register themselves here (src/main/providers/*). The MCP process
  * never registers one, so these refs fail there with a clear message instead of
- * ever seeing a credential.
+ * ever seeing a credential; agents reach them through the app's bridge.
  */
 export type VaultBackend = {
   readText(ref: VaultRef): Promise<string>

@@ -30,7 +30,8 @@ import {
 } from './fs'
 import type { RootInfo, SourceRoot } from '@shared/channels'
 import { compareGuarded, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
-import { compareProjects, ensureSourceRoot } from './compare'
+import { compareProjects, ensureSourceRoot, toRoot } from './compare'
+import { startBridge } from './bridge'
 import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
@@ -73,35 +74,10 @@ import { connectProvider, registerProviders } from './providers'
 import { dropSecrets, forgetProviderConnection } from './providers/connection'
 import { awsProfiles } from './providers/aws/creds'
 import { discoverEcs } from './providers/aws/ecs'
-import { isPrefixSource } from './providers/aws/sm'
-import type { Store } from './store'
 import { viewEnv } from '@shared/env-lint'
+import { PRODUCT } from '@shared/product'
 import { envKind } from '@shared/env-file'
 import { assertGranted } from './workspace'
-
-const toRoot = (store: Store, path: string, label: string | null): RootInfo => {
-  const r = parseRef(path)
-  const fallback = (): string => {
-    switch (r.kind) {
-      case 'ssh':
-        return `${r.host}:${r.path}`
-      case 'docker':
-        return `${r.container}${r.host ? `@${r.host}` : ''}:${r.path}`
-      case 'vault':
-        return `${r.mount}/${r.path}`
-      case 'provider':
-        return `${r.provider}:${r.path || r.connectionId}`
-      default:
-        return path
-    }
-  }
-  return {
-    path,
-    kind: r.kind === 'provider' ? r.provider : r.kind,
-    label: label ?? fallback(),
-    ...(isPrefixSource(store, path) ? { prefix: true as const } : {})
-  }
-}
 
 /** Register every handler once. Inputs from the renderer are validated with zod first. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -115,8 +91,40 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   app.on('will-quit', () => store.close())
   // Vault adapter: registers the vault:// backend for fs.ts and holds session tokens.
   registerVault(store)
-  // Read-only providers (Vercel, GitHub, Railway, Render, Dokploy, Coolify, AWS): same seam.
+  // Providers (Vercel, GitHub, Railway, Render, Dokploy, Coolify, AWS): same seam.
   registerProviders(store)
+  // Local bridge for the MCP server: sources, cross-source compare, plans and applies are
+  // answered here, with the credentials this process holds. Socket and token die with the app.
+  const bridge = startBridge(store, app.getPath('userData'), {
+    // The human in the loop for agent syncs: a native dialog, on the app window, that names
+    // what will be written where. Only the "Write" button resolves true; Cancel, Escape and
+    // closing the dialog all fail closed.
+    approve: async (p) => {
+      const win = getWindow()
+      if (win) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      const n = p.keys.length
+      const opts: Electron.MessageBoxOptions = {
+        type: 'warning',
+        title: `Agent sync request`,
+        message: `A coding agent asks ${PRODUCT} to write ${n} key${n === 1 ? '' : 's'} from ${p.source.label} to ${p.target.label}`,
+        detail: `Source: ${p.source.label} · ${p.source.path}\nTarget: ${p.target.label} · ${p.target.path}\n\nKeys:\n${p.keys.map((k) => `  ${k}`).join('\n')}\n\n${p.consequence}`,
+        buttons: ['Cancel', `Write ${n} key${n === 1 ? '' : 's'}`],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      }
+      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+      return r.response === 1
+    }
+  }).catch((e) => {
+    log.warn('MCP bridge not started', e)
+    return null
+  })
+  app.on('will-quit', () => void bridge.then((b) => b?.close()))
 
   // The server script is copied next to the database on every launch, so the path
   // clients store survives app updates and temporary AppImage mounts. The command is
