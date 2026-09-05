@@ -1,0 +1,55 @@
+# Changelog
+
+## [0.2.0](https://github.com/PiperGuy/drift/compare/v0.1.0...v0.2.0) (2026-09-05)
+
+
+### Features
+
+* add provider source integrations ([d9fc865](https://github.com/PiperGuy/drift/commit/d9fc865363937c63c4cc9c7afc573c979ec6bbc3))
+* add Vault setup guide and rename app to Drift ([010a3e5](https://github.com/PiperGuy/drift/commit/010a3e5a039d8cf15c703de11d6f855dbcc22d00))
+* enable approved MCP environment sync ([da92917](https://github.com/PiperGuy/drift/commit/da92917434f22ca496c86e560318c216c6b9e5d6))
+* **mcp:** bundled stdio MCP server — list_projects, env_status, compare_env, dry_run_plan; Agents page with client config ([53f71a5](https://github.com/PiperGuy/drift/commit/53f71a50dfac8c429443f7c1d5fadc4dd5c8bd94))
+* **native:** reveal a value behind OS auth, keys panel, tray with last receipt, close-to-tray, background auto-update, signing/notarization via CI secrets ([892ddcd](https://github.com/PiperGuy/drift/commit/892ddcd502723cecd6681c5993c2f5b7517a9bb5))
+* no tray / menu-bar icon; app icon generated from the Drift mark (electron-builder derives icns/ico from build/icon.png) ([316ec12](https://github.com/PiperGuy/drift/commit/316ec12637cffb613c02082881de51ae3b5a37d6))
+* **onboarding:** five-step first-run journey — welcome, access (macOS permission note), live first receipt, optional MCP setup, how it works; replayable from Settings ([84a1901](https://github.com/PiperGuy/drift/commit/84a19011a6d2eab1446b84d857d07937bb8cf97c))
+* **reveal:** one OS authentication per app session; clearer prompt copy ([cded21a](https://github.com/PiperGuy/drift/commit/cded21ac47c87a00b9c792f71b424fab90ca0322))
+* **roots:** multiple local folders and SSH servers as workspace roots ([9bbb545](https://github.com/PiperGuy/drift/commit/9bbb5453694e839c2a303b7d8246a7ce46bafa7f))
+* scaffold Plumbr Env desktop app ([5880ba4](https://github.com/PiperGuy/drift/commit/5880ba4266046d5e519cf1ce6764e23cf9522526))
+* **settings:** license keys + 7-day trial lock, MCP toggle, one-click MCP setup for 7 clients, Drift skill, update check, cache reset ([9715dd4](https://github.com/PiperGuy/drift/commit/9715dd42d4cf9625da0436cfe2fedbd8a6c39473))
+* **shell:** Claude-Desktop-style sidebar — top strip (traffic lights, toggle, search), Workspace|Compare switch, source switcher with Add/Update/Remove, project list in the sidebar, resizable + collapsible, Settings in the footer with the brand; rows open on click, right-click menu for compare/sync/share; History and Agents move into Settings ([554eeb2](https://github.com/PiperGuy/drift/commit/554eeb2d0273fc4241ed66ed530fb677c2da168a))
+* **sources:** Add source picker with per-source configuration (local, SSH, EC2 now; Docker, ECS, Vault, Secrets Manager shown as coming soon) ([7b4a2cc](https://github.com/PiperGuy/drift/commit/7b4a2cca252ff2fb5640529eb50e83a358643b27))
+* **sources:** suggest ~/.ssh/config host aliases in the SSH form; directory no longer defaults to / ([36d5918](https://github.com/PiperGuy/drift/commit/36d59183ad202cca6c82c1b9befdb888f04ab29c))
+* **store:** SQLite via node:sqlite — remembered root, sealed fingerprint key, redacted event log, History page ([a868661](https://github.com/PiperGuy/drift/commit/a868661432a291effab395ed6995f9fd42606c95))
+* sync provider environments across sources ([a20dedb](https://github.com/PiperGuy/drift/commit/a20dedb3dba79805c8848a489945332150a48f8a))
+* **sync:** approve-and-apply write path with snapshots and rollback ([#5](https://github.com/PiperGuy/drift/issues/5), [#6](https://github.com/PiperGuy/drift/issues/6)) ([7f3af71](https://github.com/PiperGuy/drift/commit/7f3af7102651b67d2258fd9d0154d2b9a5eedd57))
+* **ui:** animated foundation UI, design pass, collapsible sidebar ([bdce5f6](https://github.com/PiperGuy/drift/commit/bdce5f686a60029b8ea6063575d159ee47a2f425))
+* **ui:** onboarding entrance — lattice assembles under a scan beam, logo draws on, hero type ([d7a9ad1](https://github.com/PiperGuy/drift/commit/d7a9ad1055ac4993a35ce4b7461c25cc19121f55))
+* **vault:** HashiCorp Vault KV v2 as a source and CAS-guarded target ([bf32d63](https://github.com/PiperGuy/drift/commit/bf32d63f8026fd78e37f6c350a18a0b14ba2aadc))
+* **viewer:** edit values and add keys with an unsaved-changes bar and close/switch guard; writes via snapshot + atomic path ([8d2f632](https://github.com/PiperGuy/drift/commit/8d2f6324e7d4f60eaeeda0610a3e4efd24ad0edd))
+* **viewer:** env file viewer with UI and File modes, linter (12 rules), formatter through the snapshot/atomic write path ([f03d919](https://github.com/PiperGuy/drift/commit/f03d9195f96d094c243f4d87fb06045d8efc1257))
+* **viewer:** Reveal all / Hide all (one auth, 20 s), header wraps instead of clipping ([ec2d651](https://github.com/PiperGuy/drift/commit/ec2d651a344c1d7013ee2cf3dcb84e196f3bca5d))
+* **viewer:** search keys in the open file (Cmd/Ctrl+F); drop the header glow ([585ba5f](https://github.com/PiperGuy/drift/commit/585ba5f6d6fec319965bf5f35b125d12f02bd978))
+* **workspace:** search projects, file paths and key names (Cmd/Ctrl+F) ([1dbe339](https://github.com/PiperGuy/drift/commit/1dbe3396ed1e1ab2937744d4134206fc77827c63))
+* **workspaces:** named workspaces, each a set of roots; switcher in the sidebar; SSH reachable from the empty state ([9c42ca5](https://github.com/PiperGuy/drift/commit/9c42ca573d75bcfc5ab2e4275e7a1ad8793fe42a))
+* **workspace:** tick files to compare; the compare bar appears only with a selection ([117cf79](https://github.com/PiperGuy/drift/commit/117cf79e6f913a37f42a3556047a1e4ff92cf669))
+
+
+### Bug Fixes
+
+* **mac:** sidebar header clears the traffic lights, in both expanded and collapsed rail ([be5995a](https://github.com/PiperGuy/drift/commit/be5995a57826c7a2c9db44589bb7156902e82670))
+* **mcp,license:** self-contained mcp.js copied to userData (AppImage-safe), TOML block strip, key beats clock lock, locked reset IPCs, days validation, skill wording ([a3757d2](https://github.com/PiperGuy/drift/commit/a3757d2241900b2c5dde4cdaa56358e4bd35a1e0))
+* **mcp:** build mcp.js before dev; accept commented TOML headers ([ef1fdc5](https://github.com/PiperGuy/drift/commit/ef1fdc545c41a22a3759810c1a4c661382e57422))
+* **native:** last assignment wins on reveal, Dock activate restores hidden window, single-instance lock ([eaca94c](https://github.com/PiperGuy/drift/commit/eaca94cb7725845b16d1a9a908c80bcbba6dbd6e))
+* **onboarding:** compare once per pair, show scan/compare errors, complete half-picked pairs on replay ([cdbb24d](https://github.com/PiperGuy/drift/commit/cdbb24d13704216fd7a298afedcb895e8d28a1c6))
+* **roots:** ssh root '/' kept, nanosecond remote mtimes for the write guard, git worktrees on remotes, every root removable, unlock guard on remove ([a0171b8](https://github.com/PiperGuy/drift/commit/a0171b8e17df7224c8f1a250d413322e12a8e816))
+* **shell:** project switch closes the viewer (state in store), source update confirms before mutating, same-directory repick keeps the root, collapsed top strip has room ([4790d78](https://github.com/PiperGuy/drift/commit/4790d78d4c3b9baf8a80f68a10033f8ba02d3d75))
+* **ssh:** short ControlPath under ~/.ssh/drift so macOS temp paths don't exceed the Unix socket limit ([e70dc8a](https://github.com/PiperGuy/drift/commit/e70dc8aa7d50625f6aefd587e3b2f8fed7201bf8))
+* **ssh:** surface ssh's own error line and the command to reproduce it ([d687822](https://github.com/PiperGuy/drift/commit/d6878229a5c25a62a1af68ddb55a871705f29731))
+* **store:** forget revokes in-memory grants; unreadable sealed key is replaced instead of blocking startup ([616db2c](https://github.com/PiperGuy/drift/commit/616db2cf8629abbc9a6174ed155ff90b0c5488ab))
+* **sync:** re-check target before rename, refresh pair metadata after rescan, restore deleted files ([7241ad0](https://github.com/PiperGuy/drift/commit/7241ad098a59ecf79f37ea19d6193ad4cc838a72))
+* **ui:** onboarding background is a quiet dot field, not dashes ([e3ff1aa](https://github.com/PiperGuy/drift/commit/e3ff1aac167661283e85d1eb44780d3c839ca9d7))
+* **vault:** credentials never outlive their source (Codex review P1) ([a35a5ef](https://github.com/PiperGuy/drift/commit/a35a5efe2c509e55635b83a11705230eb53d464a))
+* **viewer:** dirty guard covers page navigation, shortcuts and root change; add-key checks all keys; save uses the mtime from when editing began ([8c72c2f](https://github.com/PiperGuy/drift/commit/8c72c2fd35c478a1871dcfd9ea32ba40142457ac))
+* **viewer:** escape-aware quotes (shared with parseEnv), keep comments after quoted values, fully redact invalid lines, lint quoted example secrets, no reveal on shadowed lines ([d4d48d4](https://github.com/PiperGuy/drift/commit/d4d48d4b84553dc9a7593b0245edd53226cafd46))
+* **workspaces:** MCP follows the active workspace, deleting the active one re-enters the fallback, rename checks names case-insensitively ([28d59cf](https://github.com/PiperGuy/drift/commit/28d59cf535cdddb88267842caadb1252d2655a1d))
+* **workspace:** switching project closes the open file viewer ([7d82268](https://github.com/PiperGuy/drift/commit/7d822683926b074c97e511d4bd1f264c8f1548d7))
