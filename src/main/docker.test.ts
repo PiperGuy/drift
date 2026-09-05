@@ -7,6 +7,7 @@ import {
   checkDockerRoot,
   dockerArgs,
   dockerContainers,
+  dockerExec,
   dockerRef,
   readText,
   scanRoot,
@@ -15,6 +16,7 @@ import {
 } from './fs'
 import { envShape, revealValue } from './env'
 import { grantRoot } from './workspace'
+import { linuxCommandShims } from './providers/testkit'
 
 /**
  * A fake `docker` on PATH: `exec api-1 sh -c <script>` runs the script locally
@@ -25,6 +27,7 @@ import { grantRoot } from './workspace'
 const dir = mkdtempSync(join(tmpdir(), 'drift-docker-'))
 const bin = join(dir, 'bin')
 mkdirSync(bin)
+linuxCommandShims(bin)
 const log = join(dir, 'argv.log')
 writeFileSync(
   join(bin, 'docker'),
@@ -51,6 +54,7 @@ mkdirSync(join(app, 'api', '.git'), { recursive: true })
 mkdirSync(join(app, 'node_modules', 'x'), { recursive: true })
 writeFileSync(join(app, 'api', '.env'), 'A=1\n')
 writeFileSync(join(app, 'api', '.env.production'), 'A=2\nB="x y"\n')
+writeFileSync(join(app, '$&.env'), 'DOLLAR=1\n')
 writeFileSync(join(app, 'node_modules', 'x', '.env'), 'SKIP=1\n')
 
 test('dockerArgs: argument array, -H ssh://host only for a remote daemon', () => {
@@ -64,6 +68,21 @@ test('dockerArgs: argument array, -H ssh://host only for a remote daemon', () =>
     '-c',
     'cat /x'
   ])
+})
+
+test('docker fake container preserves every NUL-delimited pathname passed from xargs to stat', async () => {
+  const out = await dockerExec(
+    null,
+    'api-1',
+    `cd ${JSON.stringify(app)}; printf './api/.env\\0./api/.env.production\\0./$&.env\\0' | xargs -0 -r stat -c '%Y %s %y %n'`
+  )
+  assert.deepEqual(
+    out
+      .trim()
+      .split('\n')
+      .map((line) => line.split(' ').at(-1)),
+    ['./api/.env', './api/.env.production', './$&.env']
+  )
 })
 
 test('docker: scan, read, stat and atomic write go through docker exec', async () => {
