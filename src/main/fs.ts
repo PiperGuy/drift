@@ -56,7 +56,7 @@ export function parseRef(ref: string): Ref {
   return { kind: 'local', path: ref }
 }
 export const isRemote = (ref: string): boolean => parseRef(ref).kind !== 'local'
-/** Provider refs have no write path at all (see writeAtomic). */
+/** Provider refs have no FILE write path (format, edit, rollback); applies go through the adapter. */
 export const isReadOnlyRef = (ref: string): boolean => parseRef(ref).kind === 'provider'
 export const sshRef = (host: string, path: string): string => `ssh://${host}${path}`
 export const dockerRef = (host: string | null, container: string, path: string): string =>
@@ -107,12 +107,34 @@ export type VaultBackend = {
  * placeholder for them, and only this set (never the text) marks them opaque.
  */
 export type EnvRead = { text: string; opaque: ReadonlySet<string> }
+/**
+ * An approved write into a provider environment. Entries are already filtered
+ * (no blanks, no names-only values, only keys the user ticked); the adapter
+ * re-reads the target immediately before mutating and refuses if it moved.
+ */
+export type ProviderWrite = {
+  entries: { key: string; value: string }[]
+  /** Provider timestamp the plan was built against (statRef at scan time). */
+  expectedMtime: number
+  /** Unique per apply: idempotency token where the provider supports one (AWS ClientRequestToken). */
+  token: string
+}
+export type ProviderWriteResult = {
+  written: string[]
+  /** The target was read back and every written value matches. */
+  verified: boolean
+  /** What could not be confirmed, and any deployment effect the user should know. */
+  note?: string
+  version?: { base: number; next: number }
+}
 export type ProviderBackend = {
   readText(ref: ProviderRef): Promise<string>
   /** Text plus opacity metadata. Backends without names-only keys may omit it. */
   readEnv?(ref: ProviderRef): Promise<EnvRead>
   stat(ref: ProviderRef): Promise<Stat>
   scan(root: string, ref: ProviderRef): Promise<ScanResult>
+  /** Write approved values. Absent = the target cannot be written from Drift. */
+  apply?(ref: ProviderRef, write: ProviderWrite): Promise<ProviderWriteResult>
 }
 let vaultBackend: VaultBackend | null = null
 const backends = new Map<ProviderId, ProviderBackend>()
@@ -131,6 +153,7 @@ function pb(r: ProviderRef): ProviderBackend {
   if (!b) throw new Error(`${r.provider} sources are only available inside the Drift app.`)
   return b
 }
+export const providerBackendFor = (r: ProviderRef): ProviderBackend => pb(r)
 export function baseRef(ref: string): string {
   return posix.basename(parseRef(ref).path.replace(/\\/g, '/'))
 }

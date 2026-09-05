@@ -27,10 +27,35 @@ const services = Array.from({ length: 120 }, (_, i) => ({
     updatedAt: '2026-01-02T00:00:00Z'
   }
 }))
-const base = await fakeApi((req, url, _body, json) => {
+const vars = new Map<string, string>([
+  ['DATABASE_URL', 'postgres://r'],
+  ['EMPTY', '']
+])
+const groupVars = new Map<string, string>([['SENTRY_DSN', 'https://s']])
+const puts: [string, unknown][] = []
+const base = await fakeApi((req, url, body, json, res) => {
   if (req.headers['authorization'] !== `Bearer ${TOKEN}`)
     return json(401, { message: 'Unauthorized' })
   const p = url.pathname
+  const put = /^\/v1\/(services\/srv-1|env-groups\/evg-1)\/env-vars\/([^/]+)$/.exec(p)
+  if (req.method === 'PUT' && put) {
+    puts.push([p, body])
+    const key = put[2]
+    if (key === 'SLOW') return // never answers
+    if (key === 'FORBIDDEN') return json(403, { message: 'insufficient scope' })
+    if (key === 'MALFORMED') {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      return res.end('<html>oops</html>')
+    }
+    if (key === 'RATE') {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '7' })
+      return res.end('{"message":"slow down"}')
+    }
+    const value = (body as { value: string }).value
+    // GHOST is accepted but never stored: simulates a read-back that does not confirm.
+    if (key !== 'GHOST') (put[1].startsWith('services') ? vars : groupVars).set(key, value)
+    return json(200, { key, value })
+  }
   const limit = Number(url.searchParams.get('limit') ?? 20)
   const cursor = url.searchParams.get('cursor')
   const after = <T extends { cursor: string }>(all: T[]): T[] => {
@@ -49,16 +74,13 @@ const base = await fakeApi((req, url, _body, json) => {
       200,
       cursor
         ? []
-        : [
-            { cursor: 'e1', envVar: { key: 'DATABASE_URL', value: 'postgres://r' } },
-            { cursor: 'e2', envVar: { key: 'EMPTY', value: '' } }
-          ]
+        : [...vars].map(([key, value], i) => ({ cursor: `e${i}`, envVar: { key, value } }))
     )
   if (p === '/v1/env-groups/evg-1')
     return json(200, {
       id: 'evg-1',
       name: 'shared',
-      envVars: [{ key: 'SENTRY_DSN', value: 'https://s' }],
+      envVars: [...groupVars].map(([key, value]) => ({ key, value })),
       secretFiles: [{ name: 'creds.json' }]
     })
   json(404, { message: 'not found' })
@@ -111,4 +133,71 @@ test('errors: a bad key is unauthorized and never echoed', async () => {
     ),
     (e: Error) => /unauthorized/i.test(e.message) && !e.message.includes('bad-key')
   )
+})
+
+// ---------- writes ----------
+const { providerBackendFor } = await import('../../fs')
+const { _setDefaultTimeout } = await import('../http')
+const apply = (
+  ref: string,
+  entries: { key: string; value: string }[]
+): Promise<import('../../fs').ProviderWriteResult> =>
+  providerBackendFor(parseRef(ref) as import('../../fs').ProviderRef).apply!(
+    parseRef(ref) as import('../../fs').ProviderRef,
+    { entries, expectedMtime: 0, token: 'unit-token' }
+  )
+
+test('write: service and env-group variables are PUT one by one, then read back', async () => {
+  puts.length = 0
+  const r = await apply(`${root}/services/srv-1/.env`, [
+    { key: 'DATABASE_URL', value: 'postgres://new' },
+    { key: 'NEW_KEY', value: 'v' }
+  ])
+  assert.deepEqual(r.written, ['DATABASE_URL', 'NEW_KEY'])
+  assert.equal(r.verified, true)
+  assert.match(r.note ?? '', /redeploy/i)
+  assert.deepEqual(puts, [
+    ['/v1/services/srv-1/env-vars/DATABASE_URL', { value: 'postgres://new' }],
+    ['/v1/services/srv-1/env-vars/NEW_KEY', { value: 'v' }]
+  ])
+  assert.match(await readText(`${root}/services/srv-1/.env`), /NEW_KEY=v\n/)
+  puts.length = 0
+  const g = await apply(`${root}/env-groups/evg-1/.env`, [
+    { key: 'SENTRY_DSN', value: 'https://t' }
+  ])
+  assert.equal(g.verified, true)
+  assert.deepEqual(puts, [['/v1/env-groups/evg-1/env-vars/SENTRY_DSN', { value: 'https://t' }]])
+})
+
+test('write: read-back mismatch is reported, never presented as a clean sync', async () => {
+  const r = await apply(`${root}/services/srv-1/.env`, [{ key: 'GHOST', value: 'x' }])
+  assert.deepEqual(r.written, ['GHOST'])
+  assert.equal(r.verified, false)
+  assert.match(r.note ?? '', /GHOST/)
+})
+
+test('write: unauthorized, malformed, rate limit and timeout fail without retry and name what was written', async () => {
+  const ref = `${root}/services/srv-1/.env`
+  await assert.rejects(apply(ref, [{ key: 'FORBIDDEN', value: 'x' }]), /forbidden|scope/i)
+  await assert.rejects(apply(ref, [{ key: 'MALFORMED', value: 'x' }]), /not JSON|malformed/i)
+  await assert.rejects(apply(ref, [{ key: 'RATE', value: 'x' }]), /rate limited/i)
+  // The first key lands, the second fails: the error says so and nothing is retried.
+  puts.length = 0
+  await assert.rejects(
+    apply(ref, [
+      { key: 'OK1', value: '1' },
+      { key: 'RATE', value: 'x' },
+      { key: 'OK2', value: '2' }
+    ]),
+    /Wrote OK1, then failed on RATE.*rate limited/i
+  )
+  assert.equal(puts.length, 2)
+  _setDefaultTimeout(200)
+  puts.length = 0
+  try {
+    await assert.rejects(apply(ref, [{ key: 'SLOW', value: 'x' }]), /did not answer/)
+  } finally {
+    _setDefaultTimeout(30_000)
+  }
+  assert.equal(puts.length, 1)
 })

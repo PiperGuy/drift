@@ -4,6 +4,8 @@ import {
   registerProviderBackend,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
 import type { Store } from '../../store'
@@ -16,16 +18,23 @@ import type {
 import { apiRequest, expectJson, ProviderError, type ApiConfig } from '../http'
 import { connectionFor, saveConnection, secretFor } from '../connection'
 import { renderEnv } from '../envtext'
+import { unconfirmed, verdict } from '../writekit'
 
 /**
- * Railway variables, read-only. One project = one source. Each environment
- * gives a shared-variables file (`.env.<environment>`) and one file per service
+ * Railway variables. One project = one source. Each environment gives a
+ * shared-variables file (`.env.<environment>`) and one file per service
  * (`<service>/.env.<environment>`). Values come back resolved from the
  * `variables` query.
  *
- * API (docs.railway.com/reference/public-api, checked 2026-09): GraphQL at
- * /graphql/v2, Bearer account or team token. Project tokens are scoped to one
- * environment and use a different header; not supported here.
+ * API (docs.railway.com/reference/public-api and schema introspection, checked
+ * 2026-09): GraphQL at /graphql/v2, Bearer account or team token. Project
+ * tokens are scoped to one environment and use a different header; not
+ * supported here. Writes: one `variableCollectionUpsert(input: { projectId,
+ * environmentId, serviceId?, variables, replace: false })` per apply, so the
+ * approved keys land together and untouched keys stay. Railway has no
+ * per-variable timestamp: the plan guard in write.ts is the staleness check.
+ * Railway redeploys the service after the change (its default; `skipDeploys`
+ * is deliberately not sent so the behaviour matches the dashboard).
  */
 export const RAILWAY_API = 'https://backboard.railway.com'
 type Cfg = { baseUrl: string; projectId: string; projectName: string }
@@ -50,7 +59,7 @@ const cfgFor = (store: Store, id: number): { cfg: Cfg; a: ApiConfig } => {
 async function gql<T>(
   a: ApiConfig,
   query: string,
-  variables: Record<string, string | undefined>,
+  variables: Record<string, unknown>,
   context: string
 ): Promise<T> {
   const r = expectJson(
@@ -145,8 +154,42 @@ async function backendReadEnv(r: ProviderRef): Promise<EnvRead> {
   )
 }
 
-// Railway exposes no per-variable timestamp: the write guard is moot (read-only).
+// Railway exposes no per-variable timestamp; the plan guard (shape re-read) covers staleness.
 const backendStat = async (): Promise<Stat> => ({ mtimeMs: 0, size: 0 })
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const { cfg, a } = cfgFor(requireStore(), r.connectionId)
+  const f = parseFile(r)
+  const where = `Railway ${cfg.projectName} ${f.envName}${f.serviceId ? ` service ${f.serviceId}` : ' (shared)'}`
+  const d = await gql<{ variableCollectionUpsert: boolean }>(
+    a,
+    `mutation ($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }`,
+    {
+      input: {
+        projectId: cfg.projectId,
+        environmentId: f.environmentId,
+        ...(f.serviceId ? { serviceId: f.serviceId } : {}),
+        variables: Object.fromEntries(w.entries.map((e) => [e.key, e.value])),
+        replace: false
+      }
+    },
+    `${where} variables`
+  )
+  if (d.variableCollectionUpsert !== true)
+    throw new ProviderError('malformed', `${where}: Railway did not confirm the upsert.`)
+  const back = await variables(a, cfg, f.environmentId, f.serviceId)
+  const missing = unconfirmed(w.entries, (k) =>
+    typeof back[k] === 'string' ? (back[k] as string) : null
+  )
+  return {
+    written: w.entries.map((e) => e.key),
+    ...verdict(
+      w.entries,
+      missing,
+      'Railway redeploys the affected service(s) with the new variables.'
+    )
+  }
+}
 
 async function backendScan(root: string, r: ProviderRef): Promise<ScanResult> {
   const started = performance.now()
@@ -179,7 +222,8 @@ export function registerRailway(store: Store): void {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -215,7 +259,7 @@ export async function connectRailway(
   const saved = saveConnection(store, 'railway', label, cfg, token, spec.storage)
   return {
     root: { path: providerRef('railway', saved.id, p.id), kind: 'railway', label },
-    summary: `${p.environments.length} environment${p.environments.length === 1 ? '' : 's'} · ${p.services.length} service${p.services.length === 1 ? '' : 's'} · read-only`,
+    summary: `${p.environments.length} environment${p.environments.length === 1 ? '' : 's'} · ${p.services.length} service${p.services.length === 1 ? '' : 's'}`,
     warnings: saved.warning ? [saved.warning] : []
   }
 }

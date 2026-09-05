@@ -4,8 +4,12 @@ import {
   registerProviderBackend,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
+import sodium from 'libsodium-wrappers'
+import { applyEach } from '../writekit'
 import type { Store } from '../../store'
 import type {
   EnvFileInfo,
@@ -18,8 +22,8 @@ import { connectionFor, saveConnection, secretFor } from '../connection'
 import { renderEnv, type Entry } from '../envtext'
 
 /**
- * GitHub Actions secrets and variables, read-only. A repository source has one
- * file for repository-level secrets + variables (`.env`) and one per deployment
+ * GitHub Actions secrets and variables. A repository source has one file for
+ * repository-level secrets + variables (`.env`) and one per deployment
  * environment (`.env.<environment>`); an organization source has one file.
  * GitHub never returns secret VALUES, only names: secrets render by name only and
  * compare as "unknown" (present / missing is all Drift can say). Variables do
@@ -28,6 +32,16 @@ import { renderEnv, type Entry } from '../envtext'
  * API (docs.github.com/rest/actions, version 2022-11-28): Bearer token (fine-grained
  * PAT with Actions secrets/variables read, or classic `repo`/`admin:org`);
  * lists are paginated with per_page + page.
+ * Writes: a key that exists as a secret is re-sealed with the scope's public key
+ * (`GET …/secrets/public-key`, libsodium sealed box, `PUT …/secrets/{name}`
+ * with encrypted_value + key_id); a key that exists as a variable is
+ * `PATCH …/variables/{name}`; a key new to the scope becomes a SECRET (the safe
+ * default, GitHub cannot turn it into a variable later without a delete).
+ * Organization entries carry a visibility: existing ones keep theirs (fetched
+ * first, selected repositories included); new organization entries are refused
+ * because Drift cannot choose which repositories may see them. Secret values
+ * can never be read back, so an apply that touched a secret reports presence,
+ * not verification.
  */
 export const GITHUB_API = 'https://api.github.com'
 type Cfg = { baseUrl: string; owner: string; repo: string | null }
@@ -169,13 +183,134 @@ async function backendScan(root: string, r: ProviderRef): Promise<ScanResult> {
   return finish(root, files, 1, started)
 }
 
+async function sealFor(
+  a: ApiConfig,
+  s: { path: string; label: string },
+  value: string
+): Promise<{ key_id: string; encrypted_value: string }> {
+  const pk = expectJson(
+    await apiRequest(a, { method: 'GET', path: `${s.path}/secrets/public-key` }),
+    `GitHub ${s.label} public key`
+  ) as { key_id?: string; key?: string }
+  if (typeof pk.key_id !== 'string' || typeof pk.key !== 'string')
+    throw new ProviderError('malformed', `GitHub ${s.label}: no public key in the response.`)
+  await sodium.ready
+  const box = sodium.crypto_box_seal(
+    sodium.from_string(value),
+    sodium.from_base64(pk.key, sodium.base64_variants.ORIGINAL)
+  )
+  return {
+    key_id: pk.key_id,
+    encrypted_value: sodium.to_base64(box, sodium.base64_variants.ORIGINAL)
+  }
+}
+
+/** Organization secrets must restate their visibility on every PUT; read it (and the repo list) first. */
+async function orgVisibility(
+  a: ApiConfig,
+  cfg: Cfg,
+  name: string
+): Promise<{ visibility: string; selected_repository_ids?: number[] }> {
+  const path = `/orgs/${enc(cfg.owner)}/actions/secrets/${enc(name)}`
+  const s = expectJson(
+    await apiRequest(a, { method: 'GET', path }),
+    `GitHub organization ${cfg.owner} secret ${name}`
+  ) as { visibility?: string }
+  if (s.visibility !== 'all' && s.visibility !== 'private' && s.visibility !== 'selected')
+    throw new ProviderError(
+      'malformed',
+      `GitHub organization secret ${name}: no visibility in the response.`
+    )
+  if (s.visibility !== 'selected') return { visibility: s.visibility }
+  const repos = await listAll(
+    a,
+    `${path}/repositories`,
+    'repositories',
+    `GitHub organization ${cfg.owner} secret ${name} repositories`
+  )
+  return {
+    visibility: 'selected',
+    selected_repository_ids: (repos as unknown as { id: number }[]).map((r) => r.id)
+  }
+}
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const { cfg, a } = cfgFor(requireStore(), r.connectionId)
+  const environment = fileOf(r, cfg)
+  const s = scopePath(cfg, environment)
+  // Re-read right before mutating: which keys are secrets, which are variables.
+  const { entries: current } = await readScope(a, cfg, environment)
+  const kinds = new Map(
+    current.map((e) => [e.key, e.value === null ? 'secret' : 'variable'] as const)
+  )
+  if (!cfg.repo) {
+    const fresh = w.entries.filter((e) => !kinds.has(e.key)).map((e) => e.key)
+    if (fresh.length)
+      throw new ProviderError(
+        'config',
+        `${fresh.join(', ')} ${fresh.length === 1 ? 'does' : 'do'} not exist in organization ${cfg.owner} yet, and Drift cannot choose which repositories may see a new organization entry. Create it in GitHub with the right visibility, then apply again to set its value.`
+      )
+  }
+  const secrets: string[] = []
+  const variables: string[] = []
+  const written = await applyEach(w.entries, async ({ key, value }) => {
+    const kind = kinds.get(key) ?? 'secret'
+    if (kind === 'secret') {
+      secrets.push(key)
+      const body: Record<string, unknown> = await sealFor(a, s, value)
+      if (!cfg.repo) Object.assign(body, await orgVisibility(a, cfg, key))
+      expectJson(
+        await apiRequest(a, { method: 'PUT', path: `${s.path}/secrets/${enc(key)}`, body }),
+        `GitHub ${s.label} secret ${key}`
+      )
+      return
+    }
+    variables.push(key)
+    expectJson(
+      await apiRequest(a, {
+        method: 'PATCH',
+        path: `${s.path}/variables/${enc(key)}`,
+        body: { name: key, value }
+      }),
+      `GitHub ${s.label} variable ${key}`
+    )
+  })
+  // Read back: variables by value, secrets by presence only (GitHub never returns them).
+  const back = await readScope(a, cfg, environment)
+  const byKey = new Map(back.entries.map((e) => [e.key, e.value]))
+  const missingVars = variables.filter(
+    (k) => byKey.get(k) !== w.entries.find((e) => e.key === k)?.value
+  )
+  const missingSecrets = secrets.filter((k) => byKey.get(k) !== null)
+  const missing = [...missingVars, ...missingSecrets]
+  const effect = 'Workflows pick the new values up on their next run.'
+  if (missing.length)
+    return {
+      written,
+      verified: false,
+      note: `Read-back did not confirm ${missing.join(', ')}: GitHub accepted the write but the scope now reports something else. Check it in GitHub before relying on it. ${effect}`
+    }
+  if (secrets.length === 0)
+    return {
+      written,
+      verified: true,
+      note: `${variables.length} variable${variables.length === 1 ? '' : 's'} confirmed by read-back. ${effect}`
+    }
+  return {
+    written,
+    verified: false,
+    note: `${secrets.join(', ')} ${secrets.length === 1 ? 'is a secret' : 'are secrets'}: GitHub confirms ${secrets.length === 1 ? 'it is' : 'they are'} present but never returns the value, so it cannot be verified by read-back.${variables.length ? ` ${variables.join(', ')} confirmed by read-back.` : ''} ${effect}`
+  }
+}
+
 export function registerGithub(store: Store): void {
   storeRef = store
   registerProviderBackend('github', {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -207,7 +342,7 @@ export async function connectGithub(
   if (saved.warning) warnings.push(saved.warning)
   return {
     root: { path: providerRef('github', saved.id, scope), kind: 'github', label },
-    summary: `${entries.length - secrets} variable${entries.length - secrets === 1 ? '' : 's'} · ${secrets} secret${secrets === 1 ? '' : 's'} (names only)${envs.length ? ` · ${envs.length} environment${envs.length === 1 ? '' : 's'}` : ''} · read-only`,
+    summary: `${entries.length - secrets} variable${entries.length - secrets === 1 ? '' : 's'} · ${secrets} secret${secrets === 1 ? '' : 's'} (names only)${envs.length ? ` · ${envs.length} environment${envs.length === 1 ? '' : 's'}` : ''}`,
     warnings
   }
 }

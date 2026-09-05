@@ -3,6 +3,7 @@ import {
   DescribeSecretCommand,
   GetSecretValueCommand,
   ListSecretsCommand,
+  PutSecretValueCommand,
   SecretsManagerClient
 } from '@aws-sdk/client-secrets-manager'
 import {
@@ -12,6 +13,8 @@ import {
   registerProviderBackend,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
 import type { Store } from '../../store'
@@ -23,14 +26,23 @@ import type {
 } from '@shared/channels'
 import { connectionFor, saveConnection } from '../connection'
 import { renderEnv, type Entry } from '../envtext'
+import { unconfirmed } from '../writekit'
 import { aws, awsError, credentials, type AwsAuth } from './creds'
 
 /**
- * AWS Secrets Manager, read-only. A source is one secret (one environment) or a
- * name prefix ending in `/` (each JSON-object secret below it is one
- * environment). Only `SecretString` bodies that parse as a JSON object are
- * readable: binary secrets, plaintext and JSON arrays/scalars fail with a safe
- * message and are never rendered. Values are fetched only when a file is read.
+ * AWS Secrets Manager. A source is one secret (one environment) or a name
+ * prefix ending in `/` (each JSON-object secret below it is one environment).
+ * Only `SecretString` bodies that parse as a JSON object are readable: binary
+ * secrets, plaintext and JSON arrays/scalars fail with a safe message and are
+ * never rendered. Values are fetched only when a file is read.
+ *
+ * Writes (PutSecretValue) create a new version holding the current JSON object
+ * with only the approved keys replaced: every other key keeps its value and its
+ * JSON type. The version read immediately before the put is the base; after
+ * the put, DescribeSecret's staging labels must show that base as AWSPREVIOUS,
+ * otherwise another writer landed in between and the result says so. The
+ * ClientRequestToken is unique per apply, so a retried request can never mint
+ * a second version. Credentials: the SDK chain only, never a stored key.
  */
 export type SmApi = {
   describe(name: string): Promise<{ name: string; lastChanged: number } | null>
@@ -39,7 +51,17 @@ export type SmApi = {
     prefix: string,
     nextToken?: string
   ): Promise<{ items: { name: string; lastChanged: number }[]; nextToken?: string }>
-  get(name: string): Promise<{ binary: boolean; string: string | undefined }>
+  get(
+    name: string,
+    versionId?: string
+  ): Promise<{ binary: boolean; string: string | undefined; versionId?: string }>
+  put(
+    name: string,
+    secretString: string,
+    clientRequestToken: string
+  ): Promise<{ versionId: string }>
+  /** DescribeSecret's VersionIdsToStages. */
+  stages(name: string): Promise<Record<string, string[]>>
 }
 
 /** 100 pages × 100 secrets. Beyond that the listing is refused, never truncated. */
@@ -74,12 +96,29 @@ function realApi(auth: AwsAuth): SmApi {
         nextToken: r.NextToken
       }
     },
-    get: async (name) => {
-      const r = await client.send(new GetSecretValueCommand({ SecretId: name }))
+    get: async (name, versionId) => {
+      const r = await client.send(
+        new GetSecretValueCommand({ SecretId: name, VersionId: versionId })
+      )
       return {
         binary: r.SecretBinary !== undefined && r.SecretString === undefined,
-        string: r.SecretString
+        string: r.SecretString,
+        versionId: r.VersionId
       }
+    },
+    put: async (name, secretString, clientRequestToken) => {
+      const r = await client.send(
+        new PutSecretValueCommand({
+          SecretId: name,
+          SecretString: secretString,
+          ClientRequestToken: clientRequestToken
+        })
+      )
+      return { versionId: r.VersionId ?? clientRequestToken }
+    },
+    stages: async (name) => {
+      const r = await client.send(new DescribeSecretCommand({ SecretId: name }))
+      return r.VersionIdsToStages ?? {}
     }
   }
 }
@@ -150,6 +189,66 @@ async function backendReadEnv(r: ProviderRef): Promise<EnvRead> {
     ],
     entries
   )
+}
+
+/** The full JSON object (not just the env-shaped keys), or a safe error. */
+function secretObject(
+  name: string,
+  body: { binary: boolean; string: string | undefined }
+): Record<string, unknown> {
+  secretEntries(name, body) // same validation and messages as reads
+  return JSON.parse(body.string as string) as Record<string, unknown>
+}
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const auth = authFor(requireStore(), r.connectionId)
+  const name = r.path
+  const ctx = `Secrets Manager ${name}`
+  const api = apiFor(auth, ctx)
+  // Re-read right before the put: current version + timestamp are the base.
+  const [meta, cur] = await Promise.all([
+    aws(ctx, auth, () => api.describe(name)),
+    aws(ctx, auth, () => api.get(name))
+  ])
+  if (!meta) throw new Error(`${ctx}: not found`)
+  if (w.expectedMtime > 0 && meta.lastChanged !== w.expectedMtime)
+    throw new Error(`${ctx} changed since this plan was made. Rescan, compare again, then apply.`)
+  const doc = secretObject(name, cur)
+  for (const e of w.entries) doc[e.key] = e.value
+  const put = await aws(ctx, auth, () => api.put(name, JSON.stringify(doc), w.token))
+  const written = w.entries.map((e) => e.key)
+  const [stages, back, after] = await Promise.all([
+    aws(ctx, auth, () => api.stages(name)),
+    aws(ctx, auth, () => api.get(name, put.versionId)),
+    aws(ctx, auth, () => api.describe(name))
+  ])
+  const version = { base: meta.lastChanged, next: after?.lastChanged ?? meta.lastChanged }
+  const previous = Object.entries(stages).find(([, labels]) => labels.includes('AWSPREVIOUS'))?.[0]
+  const raced = cur.versionId !== undefined && previous !== undefined && previous !== cur.versionId
+  const backDoc = secretObject(name, back)
+  const missing = unconfirmed(w.entries, (k) =>
+    typeof backDoc[k] === 'string' ? (backDoc[k] as string) : null
+  )
+  if (raced)
+    return {
+      written,
+      verified: false,
+      version,
+      note: `Another write landed on ${name} between Drift's re-read and this write (AWSPREVIOUS is not the version this plan was built on). The new version ${put.versionId} holds this plan's values on top of the OLDER content; review the secret in AWS before relying on it.`
+    }
+  if (missing.length)
+    return {
+      written,
+      verified: false,
+      version,
+      note: `Read-back of version ${put.versionId} did not confirm ${missing.join(', ')}. Check the secret in AWS before relying on it.`
+    }
+  return {
+    written,
+    verified: true,
+    version,
+    note: `New version ${put.versionId} is AWSCURRENT; ${written.length} value${written.length === 1 ? '' : 's'} confirmed by read-back. Consumers pick it up on their next fetch (ECS tasks at their next start).`
+  }
 }
 
 async function backendStat(r: ProviderRef): Promise<Stat> {
@@ -241,7 +340,8 @@ export function registerSecretsManager(store: Store): void {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -273,7 +373,7 @@ export async function connectSecretsManager(
       label,
       ...(mode === 'prefix' ? { prefix: true as const } : {})
     },
-    summary: `${found.length} secret${found.length === 1 ? '' : 's'} in ${auth.region} · read-only · JSON object secrets only`,
+    summary: `${found.length} secret${found.length === 1 ? '' : 's'} in ${auth.region} · JSON object secrets only`,
     warnings: []
   }
 }

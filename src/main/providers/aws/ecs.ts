@@ -7,7 +7,10 @@ import {
   ECSClient,
   ListClustersCommand,
   ListServicesCommand,
-  ListTasksCommand
+  ListTasksCommand,
+  RegisterTaskDefinitionCommand,
+  UpdateServiceCommand,
+  type RegisterTaskDefinitionCommandInput
 } from '@aws-sdk/client-ecs'
 import {
   finish,
@@ -17,6 +20,8 @@ import {
   scanScript,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
 import type { Store } from '../../store'
@@ -33,8 +38,8 @@ import { renderEnv, type Entry } from '../envtext'
 import { aws, awsError, credentials, type AwsAuth } from './creds'
 
 /**
- * AWS ECS task containers, read-only. The user picks cluster → service (or one
- * task) → container explicitly, from lists fetched with the SDK. Two read modes:
+ * AWS ECS task containers. The user picks cluster → service (or one task) →
+ * container explicitly, from lists fetched with the SDK. Two read modes:
  *
  *  - task definition (default): the container's `environment` (values) and
  *    `secrets` (names only — they resolve inside the task) from
@@ -44,7 +49,18 @@ import { aws, awsError, credentials, type AwsAuth } from './creds'
  *    session-manager-plugin, `enableExecuteCommand` on the service/task, and
  *    ecs:ExecuteCommand + ssm permissions). Every scan and read runs `find`,
  *    `stat` or `cat` in the container, so it is offered only when the user asks
- *    for it. Nothing is ever written.
+ECS Exec files are never written: they live in a running task and vanish
+ *    on the next deployment.
+ *
+ * Writes exist for SERVICE sources in task-definition mode only. Durable
+ * configuration is the task definition: Drift describes the service's current
+ * definition, registers a new revision that differs only in the chosen
+ * container's `environment` (every other field carried through verbatim, tags
+ * included), re-checks that the service still runs the revision the plan saw,
+ * and only then calls UpdateService, which starts a rolling deployment. Keys
+ * that the container takes from `secrets` (Secrets Manager / SSM) are refused:
+ * change the secret itself. A `task:` source is one ephemeral task, so it is
+ * refused too.
  *
  * Refs: `ecs://<conn>/<cluster>/<service:x|task:id>/<container>/.env` and
  * `ecs://<conn>/<cluster>/<selector>/<container>/fs/<dir>/<file>`.
@@ -81,6 +97,37 @@ export type EcsApi = {
       environmentFiles: { value: string; type: string }[]
     }[]
   }>
+  /** The whole definition as the API returns it (plus tags), for re-registration. */
+  describeTaskDefinitionRaw(arn: string): Promise<{
+    definition: Record<string, unknown>
+    tags: { key?: string; value?: string }[]
+  }>
+  registerTaskDefinition(input: Record<string, unknown>): Promise<{ arn: string; revision: number }>
+  updateService(cluster: string, service: string, taskDefinitionArn: string): Promise<void>
+}
+
+/** DescribeTaskDefinition fields that RegisterTaskDefinition does not accept. */
+const READ_ONLY_TD_FIELDS = [
+  'taskDefinitionArn',
+  'revision',
+  'status',
+  'requiresAttributes',
+  'compatibilities',
+  'registeredAt',
+  'registeredBy',
+  'deregisteredAt',
+  'deleteRequestedAt'
+]
+/** A register input from a described definition: same fields, minus the read-only ones. */
+export function registerInput(
+  definition: Record<string, unknown>,
+  tags: { key?: string; value?: string }[]
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(definition))
+    if (!READ_ONLY_TD_FIELDS.includes(k) && v !== undefined) input[k] = v
+  if (tags.length) input['tags'] = tags
+  return input
 }
 
 const nameOf = (arn: string): string => arn.split('/').pop() ?? arn
@@ -191,6 +238,27 @@ function realApi(auth: AwsAuth): EcsApi {
           }))
         }))
       }
+    },
+    describeTaskDefinitionRaw: async (arn) => {
+      const r = await client.send(
+        new DescribeTaskDefinitionCommand({ taskDefinition: arn, include: ['TAGS'] })
+      )
+      return {
+        definition: (r.taskDefinition ?? {}) as unknown as Record<string, unknown>,
+        tags: r.tags ?? []
+      }
+    },
+    registerTaskDefinition: async (input) => {
+      const r = await client.send(
+        new RegisterTaskDefinitionCommand(input as unknown as RegisterTaskDefinitionCommandInput)
+      )
+      return {
+        arn: r.taskDefinition?.taskDefinitionArn ?? '',
+        revision: r.taskDefinition?.revision ?? 0
+      }
+    },
+    updateService: async (cluster, service, taskDefinition) => {
+      await client.send(new UpdateServiceCommand({ cluster, service, taskDefinition }))
     }
   }
 }
@@ -471,6 +539,102 @@ async function backendReadEnv(r: ProviderRef): Promise<EnvRead> {
   )
 }
 
+type ContainerDef = {
+  name?: string
+  environment?: { name?: string; value?: string }[]
+  secrets?: { name?: string }[]
+}
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const auth = authFor(requireStore(), r.connectionId)
+  const t = parseTarget(r.path)
+  const where = `ECS ${t.cluster}/${t.selector.replace(':', ' ')}/${t.container}`
+  if (t.dir)
+    throw new Error(
+      `${where}: files read with ECS Exec live inside a running task and are replaced on the next deployment, so Drift does not write them. Write to the service's task definition instead (add the service as a source without a directory), or to the source those files are generated from.`
+    )
+  const [kind, name] = t.selector.split(':', 2) as ['service' | 'task', string]
+  if (kind !== 'service')
+    throw new Error(
+      `${where}: a task is replaced on every deployment, so changing its environment would not persist. Add the service that runs it as a source and apply there.`
+    )
+  const api = apiFor(auth, where)
+  // Re-read: the service must still run the revision the plan was built against.
+  const svc = (await aws(where, auth, () => api.describeServices(t.cluster, [name])))[0]
+  if (!svc) throw new Error(`${where}: service ${name} not found in cluster ${t.cluster}.`)
+  const base = await aws(`ECS task definition ${nameOf(svc.taskDefinition)}`, auth, () =>
+    api.describeTaskDefinition(svc.taskDefinition)
+  )
+  if (w.expectedMtime > 0 && base.registeredAt !== w.expectedMtime)
+    throw new Error(`${where} changed since this plan was made. Rescan, compare again, then apply.`)
+  const container = base.containers.find((c) => c.name === t.container)
+  if (!container)
+    throw new Error(
+      `${where}: container ${t.container} not in task definition ${nameOf(svc.taskDefinition)}.`
+    )
+  const fromSecrets = w.entries
+    .map((e) => e.key)
+    .filter((k) => container.secrets.some((s) => s.name === k))
+  if (fromSecrets.length)
+    throw new Error(
+      `${fromSecrets.join(', ')} ${fromSecrets.length === 1 ? 'comes' : 'come'} from Secrets Manager / SSM (the container's \`secrets\`), not from the task definition environment. Change the secret itself (add it as an AWS Secrets Manager source) and untick ${fromSecrets.length === 1 ? 'this key' : 'these keys'} here.`
+    )
+  const raw = await aws(`ECS task definition ${nameOf(svc.taskDefinition)}`, auth, () =>
+    api.describeTaskDefinitionRaw(svc.taskDefinition)
+  )
+  const input = registerInput(raw.definition, raw.tags)
+  const defs = (input['containerDefinitions'] as ContainerDef[] | undefined) ?? []
+  const target = defs.find((c) => c.name === t.container)
+  if (!target)
+    throw new Error(
+      `${where}: container ${t.container} not in task definition ${nameOf(svc.taskDefinition)}.`
+    )
+  const env = [...(target.environment ?? [])]
+  for (const e of w.entries) {
+    const i = env.findIndex((x) => x.name === e.key)
+    if (i >= 0) env[i] = { name: e.key, value: e.value }
+    else env.push({ name: e.key, value: e.value })
+  }
+  target.environment = env
+  const reg = await aws(`ECS register task definition ${base.family}`, auth, () =>
+    api.registerTaskDefinition(input)
+  )
+  const written = w.entries.map((e) => e.key)
+  // Re-check before the deployment: another deploy since the re-read means the plan no longer applies.
+  const again = (await aws(where, auth, () => api.describeServices(t.cluster, [name])))[0]
+  if (!again || again.taskDefinition !== svc.taskDefinition)
+    throw new Error(
+      `${nameOf(reg.arn)} was registered, but service ${name} moved from ${nameOf(svc.taskDefinition)} to ${nameOf(again?.taskDefinition ?? '?')} meanwhile, so it was not updated. Rescan, compare again, then apply; deregister ${nameOf(reg.arn)} if you do not need it.`
+    )
+  await aws(`ECS update service ${name}`, auth, () => api.updateService(t.cluster, name, reg.arn))
+  const [after, td] = await Promise.all([
+    aws(where, auth, () => api.describeServices(t.cluster, [name])),
+    aws(`ECS task definition ${nameOf(reg.arn)}`, auth, () => api.describeTaskDefinition(reg.arn))
+  ])
+  const backEnv = new Map(
+    (td.containers.find((c) => c.name === t.container)?.environment ?? []).map((e) => [
+      e.name,
+      e.value ?? ''
+    ])
+  )
+  const missing = w.entries.filter((e) => backEnv.get(e.key) !== e.value).map((e) => e.key)
+  const onService = after[0]?.taskDefinition === reg.arn
+  const version = { base: base.revision, next: reg.revision }
+  if (!onService || missing.length)
+    return {
+      written,
+      verified: false,
+      version,
+      note: `${nameOf(reg.arn)} is registered${onService ? '' : ` but service ${name} does not report it yet`}${missing.length ? `, and read-back did not confirm ${missing.join(', ')}` : ''}. Check the service in ECS before relying on it.`
+    }
+  return {
+    written,
+    verified: true,
+    version,
+    note: `Service ${name} now points at ${nameOf(reg.arn)}: ECS started a rolling deployment, and running tasks are replaced as it rolls out. \`secrets\`, environmentFiles and every other field were carried over unchanged.`
+  }
+}
+
 async function backendStat(r: ProviderRef): Promise<Stat> {
   const auth = authFor(requireStore(), r.connectionId)
   const t = parseTarget(r.path)
@@ -524,7 +688,8 @@ export function registerEcs(store: Store): void {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -590,7 +755,7 @@ export async function connectEcs(
     root: { path: providerRef('ecs', saved.id, path), kind: 'ecs', label },
     summary: dir
       ? `files under ${dir} in ${spec.container} via ECS Exec · task definition ${env.label} · read-only`
-      : `task definition ${env.label} · ${env.entries.length - secrets} value${env.entries.length - secrets === 1 ? '' : 's'} · ${secrets} secret${secrets === 1 ? '' : 's'} (names only) · read-only`,
+      : `task definition ${env.label} · ${env.entries.length - secrets} value${env.entries.length - secrets === 1 ? '' : 's'} · ${secrets} secret${secrets === 1 ? '' : 's'} (names only)${spec.selector.startsWith('service:') ? '' : ' · read-only (task)'}`,
     warnings
   }
 }

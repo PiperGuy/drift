@@ -24,6 +24,50 @@ const { OPAQUE_FINGERPRINT } = await import('@shared/drift')
 
 const dir = tempDir('drift-ecs-')
 const TD = 'arn:aws:ecs:eu-west-1:123456789012:task-definition/api:7'
+const TD8 = 'arn:aws:ecs:eu-west-1:123456789012:task-definition/api:8'
+const state = {
+  serviceTd: TD,
+  registered: [] as unknown[],
+  updated: [] as string[],
+  moveOnRegister: false
+}
+const rawTd = {
+  taskDefinitionArn: TD,
+  revision: 7,
+  status: 'ACTIVE',
+  registeredAt: new Date(1700000000000),
+  registeredBy: 'arn:aws:iam::123456789012:user/x',
+  requiresAttributes: [{ name: 'com.amazonaws.ecs.capability.docker-remote-api.1.18' }],
+  compatibilities: ['EC2', 'FARGATE'],
+  family: 'api',
+  cpu: '256',
+  memory: '512',
+  networkMode: 'awsvpc',
+  requiresCompatibilities: ['FARGATE'],
+  executionRoleArn: 'arn:aws:iam::123456789012:role/exec',
+  taskRoleArn: 'arn:aws:iam::123456789012:role/task',
+  volumes: [{ name: 'data', host: {} }],
+  containerDefinitions: [
+    {
+      name: 'api',
+      image: 'img:7',
+      essential: true,
+      environment: [
+        { name: 'DATABASE_URL', value: 'postgres://ecs' },
+        { name: 'PORT', value: '3000' }
+      ],
+      secrets: [
+        {
+          name: 'STRIPE_KEY',
+          valueFrom: 'arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/stripe-AbCdEf:key::'
+        }
+      ],
+      environmentFiles: [{ value: 'arn:aws:s3:::bucket/prod.env', type: 's3' }],
+      logConfiguration: { logDriver: 'awslogs', options: { 'awslogs-group': 'g' } }
+    },
+    { name: 'sidecar', image: 'side:1', essential: false }
+  ]
+}
 const TASK = 'arn:aws:ecs:eu-west-1:123456789012:task/prod/0123456789abcdef0123456789abcdef'
 const fake: EcsApi = {
   listClusters: async () => ['prod', 'staging'],
@@ -31,7 +75,11 @@ const fake: EcsApi = {
   describeServices: async (cluster, names) =>
     names
       .filter((n) => cluster === 'prod' && ['api', 'worker'].includes(n))
-      .map((name) => ({ name, taskDefinition: TD, runningCount: name === 'api' ? 2 : 0 })),
+      .map((name) => ({
+        name,
+        taskDefinition: name === 'api' ? state.serviceTd : TD,
+        runningCount: name === 'api' ? 2 : 0
+      })),
   listTasks: async (cluster, service) =>
     cluster === 'prod' && (!service || service === 'api') ? [TASK] : [],
   describeTasks: async (_cluster, arns) =>
@@ -48,33 +96,51 @@ const fake: EcsApi = {
         ]
       : [],
   describeTaskDefinition: async (arn) => {
+    const td =
+      arn === TD
+        ? rawTd
+        : arn === TD8 && state.registered.length
+          ? {
+              ...(state.registered[0] as typeof rawTd),
+              revision: 8,
+              registeredAt: new Date(1700000500000)
+            }
+          : null
+    if (!td)
+      throw Object.assign(new Error('Unable to describe task definition.'), {
+        name: 'ClientException'
+      })
+    return {
+      family: td.family,
+      revision: td.revision,
+      registeredAt: td.registeredAt.getTime(),
+      containers: td.containerDefinitions.map((c) => ({
+        name: c.name,
+        environment: (c as (typeof rawTd.containerDefinitions)[0]).environment ?? [],
+        secrets: (c as (typeof rawTd.containerDefinitions)[0]).secrets ?? [],
+        environmentFiles: (c as (typeof rawTd.containerDefinitions)[0]).environmentFiles ?? []
+      }))
+    }
+  },
+  describeTaskDefinitionRaw: async (arn) => {
     if (arn !== TD)
       throw Object.assign(new Error('Unable to describe task definition.'), {
         name: 'ClientException'
       })
     return {
-      family: 'api',
-      revision: 7,
-      registeredAt: 1700000000000,
-      containers: [
-        {
-          name: 'api',
-          environment: [
-            { name: 'DATABASE_URL', value: 'postgres://ecs' },
-            { name: 'PORT', value: '3000' }
-          ],
-          secrets: [
-            {
-              name: 'STRIPE_KEY',
-              valueFrom:
-                'arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/stripe-AbCdEf:key::'
-            }
-          ],
-          environmentFiles: [{ value: 'arn:aws:s3:::bucket/prod.env', type: 's3' }]
-        },
-        { name: 'sidecar', environment: [], secrets: [], environmentFiles: [] }
-      ]
+      definition: structuredClone(rawTd) as unknown as Record<string, unknown>,
+      tags: [{ key: 'team', value: 'core' }]
     }
+  },
+  registerTaskDefinition: async (input) => {
+    state.registered.push(input)
+    if (state.moveOnRegister)
+      state.serviceTd = 'arn:aws:ecs:eu-west-1:123456789012:task-definition/api:9'
+    return { arn: TD8, revision: 8 }
+  },
+  updateService: async (cluster, service, taskDefinition) => {
+    state.updated.push(`${cluster}/${service}/${taskDefinition}`)
+    state.serviceTd = taskDefinition
   }
 }
 _setEcsApi(() => fake)
@@ -337,4 +403,104 @@ test('pageAll: follows every nextToken; a token left at the cap is a clear error
     (e: Error) =>
       /ECS services.*more than 20 pages/.test(e.message) && !e.message.includes('secret-arn')
   )
+})
+
+// ---------- writes ----------
+const { providerBackendFor } = await import('../../fs')
+const apply = (
+  ref: string,
+  entries: { key: string; value: string }[],
+  expectedMtime = 0
+): Promise<import('../../fs').ProviderWriteResult> =>
+  providerBackendFor(parseRef(ref) as import('../../fs').ProviderRef).apply!(
+    parseRef(ref) as import('../../fs').ProviderRef,
+    { entries, expectedMtime, token: 'unit-token' }
+  )
+const { parseRef } = await import('../../fs')
+
+test('write service: a key sourced from secrets, a stale plan and an ephemeral target are refused before anything is registered', async () => {
+  state.registered.length = 0
+  state.updated.length = 0
+  await assert.rejects(
+    apply(`${root}/.env`, [{ key: 'STRIPE_KEY', value: 'sk' }], 1700000000000),
+    /STRIPE_KEY.*Secrets Manager|SSM/i
+  )
+  await assert.rejects(apply(`${root}/.env`, [{ key: 'PORT', value: '1' }], 1), /changed since/)
+  const conn = (parseRef(root) as { connectionId: number }).connectionId
+  grantRoot(`ecs://${conn}/prod/task:0123456789abcdef0123456789abcdef/api`)
+  await assert.rejects(
+    apply(`ecs://${conn}/prod/task:0123456789abcdef0123456789abcdef/api/.env`, [
+      { key: 'PORT', value: '1' }
+    ]),
+    /replaced on every deployment.*service/i
+  )
+  grantRoot(`ecs://${conn}/prod/service:api/api/fs/app`)
+  await assert.rejects(
+    apply(`ecs://${conn}/prod/service:api/api/fs/app/.env`, [{ key: 'PORT', value: '1' }]),
+    /running task.*next deployment/i
+  )
+  assert.equal(state.registered.length, 0)
+  assert.equal(state.updated.length, 0)
+})
+
+test('write service: registers a revision with only the container environment changed, then updates the service and reads back', async () => {
+  state.registered.length = 0
+  state.updated.length = 0
+  const r = await apply(
+    `${root}/.env`,
+    [
+      { key: 'PORT', value: '4000' },
+      { key: 'NEW', value: 'n' }
+    ],
+    1700000000000
+  )
+  assert.deepEqual(r.written, ['PORT', 'NEW'])
+  assert.equal(r.verified, true)
+  assert.match(r.note ?? '', /api:8.*deployment/i)
+  assert.deepEqual(r.version, { base: 7, next: 8 })
+  assert.equal(state.registered.length, 1)
+  const input = state.registered[0] as Record<string, unknown>
+  // Read-only response fields never go back in; everything else is carried through verbatim.
+  for (const k of [
+    'taskDefinitionArn',
+    'revision',
+    'status',
+    'registeredAt',
+    'registeredBy',
+    'requiresAttributes',
+    'compatibilities'
+  ])
+    assert.ok(!(k in input), `${k} must not be re-registered`)
+  assert.equal(input['family'], 'api')
+  assert.equal(input['executionRoleArn'], rawTd.executionRoleArn)
+  assert.deepEqual(input['volumes'], rawTd.volumes)
+  assert.deepEqual(input['tags'], [{ key: 'team', value: 'core' }])
+  const containers = input['containerDefinitions'] as typeof rawTd.containerDefinitions
+  assert.deepEqual(containers[0].environment, [
+    { name: 'DATABASE_URL', value: 'postgres://ecs' },
+    { name: 'PORT', value: '4000' },
+    { name: 'NEW', value: 'n' }
+  ])
+  assert.deepEqual(containers[0].secrets, rawTd.containerDefinitions[0].secrets)
+  assert.deepEqual(containers[0].logConfiguration, rawTd.containerDefinitions[0].logConfiguration)
+  assert.deepEqual(containers[1], rawTd.containerDefinitions[1])
+  assert.deepEqual(state.updated, [`prod/api/${TD8}`])
+})
+
+test('write service: the service moving between register and update stops the update and says so', async () => {
+  state.serviceTd = TD
+  state.registered.length = 0
+  state.updated.length = 0
+  state.moveOnRegister = true
+  try {
+    await assert.rejects(
+      apply(`${root}/.env`, [{ key: 'PORT', value: '5000' }]),
+      /api:8 was registered.*service .* moved .*not updated/i
+    )
+  } finally {
+    state.moveOnRegister = false
+    state.serviceTd = TD
+  }
+  assert.equal(state.registered.length, 1)
+  assert.equal(state.updated.length, 0)
 })

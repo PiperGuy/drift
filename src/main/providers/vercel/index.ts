@@ -5,6 +5,8 @@ import {
   registerProviderBackend,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
 import type { Store } from '../../store'
@@ -17,23 +19,31 @@ import type {
 import { apiRequest, expectJson, paginate, ProviderError, type ApiConfig } from '../http'
 import { connectionFor, saveConnection, secretFor } from '../connection'
 import { renderEnv, type Entry } from '../envtext'
+import { applyEach, verdict } from '../writekit'
 
 /**
- * Vercel project environment variables, read-only. One project = one source;
- * each target (production / preview / development) is one environment "file",
- * and branch-scoped preview variables get `branches/<branch>/.env.preview`.
+ * Vercel project environment variables. One project = one source; each target
+ * (production / preview / development) is one environment "file", and
+ * branch-scoped preview variables get `branches/<branch>/.env.preview`.
  * Values come back for plain and encrypted variables (`decrypt=true`, only when
  * a file is actually read); `sensitive` variables are reported by name only.
  *
  * API (vercel.com/docs/rest-api, checked 2026-09): Bearer token; team-owned
  * projects need `teamId`; GET /v9/projects/{idOrName}; GET
  * /v10/projects/{id}/env?decrypt=true, paginated with `until`.
+ * Writes: PATCH /v9/projects/{id}/env/{envId} { value, type, target, gitBranch }
+ * updates one variable; POST /v10/projects/{id}/env { key, value, type, target,
+ * gitBranch } creates one (201 with `created` + `failed[]`). A variable that
+ * spans several targets is split first (PATCH it to drop this file's target,
+ * then POST a copy for this target) so a write to `.env.production` never
+ * changes preview or development. `system` variables cannot be set.
  */
 export const VERCEL_API = 'https://api.vercel.com'
 const TARGETS = ['development', 'preview', 'production'] as const
 type Target = (typeof TARGETS)[number]
 
 type Var = {
+  id: string
   key: string
   value?: string
   type: string
@@ -140,6 +150,79 @@ async function backendStat(r: ProviderRef): Promise<Stat> {
   return { mtimeMs: Math.max(0, ...vars.map((v) => v.updatedAt ?? 0)), size: 0 }
 }
 
+type File = ReturnType<typeof parseFile>
+const WRITABLE_TYPES = new Set(['encrypted', 'plain', 'sensitive'])
+const scope = (f: File): { target: Target[]; gitBranch?: string } => ({
+  target: [f.target],
+  ...(f.branch ? { gitBranch: f.branch } : {})
+})
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const store = requireStore()
+  const { cfg, token } = cfgFor(store, r.connectionId)
+  const a = api(cfg, token)
+  const file = parseFile(relOf(r))
+  const where = `Vercel ${cfg.projectName} ${file.target}${file.branch ? ` (branch ${file.branch})` : ''}`
+  const envPath = `/v10/projects/${encodeURIComponent(cfg.projectId)}/env`
+  const q = { teamId: cfg.teamId ?? undefined }
+  // Re-read right before mutating: the newest timestamp must be the one the plan saw.
+  const all = await listVars(a, cfg, false)
+  const mine = all.filter((v) => belongs(v, file))
+  if (w.expectedMtime > 0 && Math.max(0, ...mine.map((v) => v.updatedAt ?? 0)) !== w.expectedMtime)
+    throw new Error(`${where} changed since this plan was made. Rescan, compare again, then apply.`)
+  for (const e of w.entries) {
+    const v = mine.find((x) => x.key === e.key)
+    if (v?.type === 'system')
+      throw new ProviderError(
+        'config',
+        `${e.key} is a Vercel system variable (${where}); Vercel sets it and it cannot be written. Untick it and apply again.`
+      )
+  }
+  const create = async (body: Record<string, unknown>, key: string): Promise<void> => {
+    const res = expectJson(
+      await apiRequest(a, { method: 'POST', path: envPath, query: q, body }),
+      `${where} variable ${key}`
+    ) as { failed?: { error?: { message?: string } }[] } | null
+    const failed = res?.failed?.[0]?.error?.message
+    if (failed) throw new ProviderError('http', `${where} variable ${key}: ${failed.slice(0, 200)}`)
+  }
+  const patch = async (id: string, body: Record<string, unknown>, key: string): Promise<void> => {
+    expectJson(
+      await apiRequest(a, {
+        method: 'PATCH',
+        path: `/v9/projects/${encodeURIComponent(cfg.projectId)}/env/${encodeURIComponent(id)}`,
+        query: q,
+        body
+      }),
+      `${where} variable ${key}`
+    )
+  }
+  const written = await applyEach(w.entries, async ({ key, value }) => {
+    const v = mine.find((x) => x.key === key)
+    const type = v && WRITABLE_TYPES.has(v.type) ? v.type : 'encrypted'
+    if (!v) return create({ key, value, type, ...scope(file) }, key)
+    const others = (v.target ?? []).filter((t) => t !== file.target)
+    if (others.length === 0) return patch(v.id, { value, type, ...scope(file) }, key)
+    // Shared across targets: detach this target, then give it its own copy with the new value.
+    await patch(v.id, { target: others }, key)
+    await create({ key, value, type, ...scope(file) }, key)
+  })
+  const back = (await listVars(a, cfg, true)).filter((v) => belongs(v, file))
+  const sensitive = w.entries.filter((e) => back.find((v) => v.key === e.key)?.type === 'sensitive')
+  const missing = w.entries
+    .filter((e) => !sensitive.includes(e))
+    .filter((e) => back.find((v) => v.key === e.key)?.value !== e.value)
+    .map((e) => e.key)
+  const effect = 'Vercel applies the new values to future deployments: redeploy to pick them up.'
+  const base = verdict(w.entries, missing, effect)
+  if (sensitive.length === 0) return { written, ...base }
+  return {
+    written,
+    verified: false,
+    note: `${sensitive.map((e) => e.key).join(', ')} ${sensitive.length === 1 ? 'is' : 'are'} sensitive in Vercel: present after the write, but the value can never be read back. ${missing.length ? base.note : `${effect}`}`
+  }
+}
+
 async function backendScan(root: string, r: ProviderRef): Promise<ScanResult> {
   const store = requireStore()
   const started = performance.now()
@@ -166,7 +249,8 @@ export function registerVercel(store: Store): void {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -204,7 +288,7 @@ export async function connectVercel(
   if (saved.warning) warnings.push(saved.warning)
   return {
     root: { path: providerRef('vercel', saved.id, project.id), kind: 'vercel', label },
-    summary: `${files.size} environment${files.size === 1 ? '' : 's'} · ${vars.length} variable${vars.length === 1 ? '' : 's'} · read-only`,
+    summary: `${files.size} environment${files.size === 1 ? '' : 's'} · ${vars.length} variable${vars.length === 1 ? '' : 's'}`,
     warnings
   }
 }

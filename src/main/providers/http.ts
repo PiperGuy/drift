@@ -47,6 +47,12 @@ export class ProviderError extends Error {
   }
 }
 
+let defaultTimeoutMs = 30_000
+/** Test seam: shorten the request timeout so the timeout branch can be exercised. */
+export function _setDefaultTimeout(ms: number): void {
+  defaultTimeoutMs = ms
+}
+
 export const userAgent = (): string =>
   `Drift/${typeof app?.getVersion === 'function' ? app.getVersion() : '0.0.0'}`
 
@@ -89,7 +95,7 @@ export async function apiRequest(
       port: base.port || (base.protocol === 'https:' ? 443 : 80),
       path,
       headers,
-      timeout: opts.timeoutMs ?? 30_000
+      timeout: opts.timeoutMs ?? defaultTimeoutMs
     }
     const req =
       base.protocol === 'https:'

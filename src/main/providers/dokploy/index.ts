@@ -1,4 +1,15 @@
-import { finish, providerRef, registerProviderBackend, type ProviderRef, type Stat } from '../../fs'
+import {
+  finish,
+  providerRef,
+  registerProviderBackend,
+  type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
+  type Stat
+} from '../../fs'
+import { parseEnv, patchEnv } from '@shared/env-file'
+import { renderAssignment } from '@shared/env-lint'
+import { unconfirmed, verdict } from '../writekit'
 import type { Store } from '../../store'
 import type {
   EnvFileInfo,
@@ -11,14 +22,20 @@ import { connectionFor, saveConnection, secretFor } from '../connection'
 import { assertAddress } from '../vault/client'
 
 /**
- * Dokploy application variables, read-only. Self-hosted: instance URL + API
- * key, optional custom CA. Dokploy stores an application's environment as
- * `.env`-formatted text, which becomes the file body verbatim (with a header).
+ * Dokploy application variables. Self-hosted: instance URL + API key, optional
+ * custom CA. Dokploy stores an application's environment as `.env`-formatted
+ * text, which becomes the file body verbatim (with a header).
  * Files: `<project>/<application>/.env`, or `<project>/<environment>/<application>/.env`
  * on Dokploy versions with environments.
  *
  * API (docs.dokploy.com/docs/api, checked 2026-09): header `x-api-key`;
- * GET /api/project.all; GET /api/application.one?applicationId=…
+ * GET /api/project.all; GET /api/application.one?applicationId=…;
+ * POST /api/application.saveEnvironment { applicationId, env, buildArgs,
+ * buildSecrets, createEnvFile } replaces the whole env text, so a write
+ * re-reads it, patches the approved keys in place (comments and order kept)
+ * and saves it back with the other fields carried through unchanged. Dokploy
+ * has no version to compare-and-set on; the re-read happens right before the
+ * save.
  */
 type Cfg = { address: string; caPem: string | null }
 type App = { applicationId: string; name?: string; appName?: string }
@@ -75,21 +92,74 @@ function apps(list: Project[]): { id: string; rel: string }[] {
   return out
 }
 
-async function backendReadText(r: ProviderRef): Promise<string> {
-  const { cfg, a } = cfgFor(requireStore(), r.connectionId)
+type AppOne = {
+  env?: string | null
+  buildArgs?: string | null
+  buildSecrets?: string | null
+  createEnvFile?: boolean
+  name?: string
+  appName?: string
+}
+const appId = (r: ProviderRef): string => {
   const m = /^([^/]+)\/\.env$/.exec(r.path)
   if (!m) throw new Error(`${r.path}: not a Dokploy application file`)
-  const app = expectJson(
+  return m[1]
+}
+async function readApp(a: ApiConfig, id: string): Promise<AppOne> {
+  return expectJson(
     await apiRequest(a, {
       method: 'GET',
       path: '/api/application.one',
-      query: { applicationId: m[1] }
+      query: { applicationId: id }
     }),
-    `Dokploy application ${m[1]}`
-  ) as { env?: string | null; name?: string; appName?: string }
+    `Dokploy application ${id}`
+  ) as AppOne
+}
+const envText = (app: AppOne): string => {
   const env = typeof app.env === 'string' ? app.env : ''
-  const body = env === '' || env.endsWith('\n') ? env : env + '\n'
-  return `# dokploy:${new URL(cfg.address).host} ${app.name || app.appName || m[1]} · values live in Dokploy\n${body}`
+  return env === '' || env.endsWith('\n') ? env : env + '\n'
+}
+
+async function backendReadText(r: ProviderRef): Promise<string> {
+  const { cfg, a } = cfgFor(requireStore(), r.connectionId)
+  const id = appId(r)
+  const app = await readApp(a, id)
+  return `# dokploy:${new URL(cfg.address).host} ${app.name || app.appName || id} · values live in Dokploy\n${envText(app)}`
+}
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const { a } = cfgFor(requireStore(), r.connectionId)
+  const id = appId(r)
+  const app = await readApp(a, id) // re-read right before the save
+  const before = envText(app)
+  const next = patchEnv(
+    before,
+    w.entries.map((e) => ({ key: e.key, text: renderAssignment(before, e.key, e.value) }))
+  )
+  expectJson(
+    await apiRequest(a, {
+      method: 'POST',
+      path: '/api/application.saveEnvironment',
+      body: {
+        applicationId: id,
+        env: next,
+        buildArgs: app.buildArgs ?? null,
+        buildSecrets: app.buildSecrets ?? null,
+        createEnvFile: app.createEnvFile ?? false
+      }
+    }),
+    `Dokploy application ${id} environment`
+  )
+  const back = new Map(parseEnv(envText(await readApp(a, id))).map((e) => [e.key, e.value]))
+  const missing = unconfirmed(w.entries, (k) => back.get(k))
+  return {
+    written: w.entries.map((e) => e.key),
+    ...verdict(
+      w.entries,
+      missing,
+      'Dokploy uses the new environment on the next deployment: redeploy the application to pick it up.'
+    )
+  }
 }
 
 const backendStat = async (): Promise<Stat> => ({ mtimeMs: 0, size: 0 })
@@ -114,7 +184,8 @@ export function registerDokploy(store: Store): void {
   registerProviderBackend('dokploy', {
     readText: backendReadText,
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -135,7 +206,7 @@ export async function connectDokploy(
   const saved = saveConnection(store, 'dokploy', label, cfg, token, spec.storage)
   return {
     root: { path: providerRef('dokploy', saved.id, ''), kind: 'dokploy', label },
-    summary: `${list.length} project${list.length === 1 ? '' : 's'} · ${all.length} application${all.length === 1 ? '' : 's'} · read-only`,
+    summary: `${list.length} project${list.length === 1 ? '' : 's'} · ${all.length} application${all.length === 1 ? '' : 's'}`,
     warnings: saved.warning ? [saved.warning] : []
   }
 }

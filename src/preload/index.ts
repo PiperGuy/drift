@@ -51,6 +51,8 @@ const plumbr: PlumbrApi = {
   dockerContainers: (host) => ipcRenderer.invoke(Channels.dockerContainers, host),
   awsProfiles: () => ipcRenderer.invoke(Channels.awsProfiles),
   ecsDiscover: (req) => ipcRenderer.invoke(Channels.ecsDiscover, req),
+  rootsAll: () => ipcRenderer.invoke(Channels.rootsAll),
+  projectCompare: (req) => ipcRenderer.invoke(Channels.projectCompare, req),
   onFullscreen: (cb) => {
     const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
     ipcRenderer.on(Channels.windowFullscreen, h)

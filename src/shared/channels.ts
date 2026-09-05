@@ -53,16 +53,21 @@ export const Channels = {
   workspaceAddDocker: 'workspace:add-docker',
   dockerContainers: 'docker:containers',
   awsProfiles: 'aws:profiles',
-  ecsDiscover: 'ecs:discover'
+  ecsDiscover: 'ecs:discover',
+  rootsAll: 'roots:all',
+  projectCompare: 'project:compare'
 } as const
 
 /** A source the user switches between: a named set of roots (usually one). `path` is its first root. */
 export type Workspace = { id: number; name: string; roots: number; path: string | null }
+/** Every remembered root across every source, for the cross-source picker. */
+export type SourceRoot = RootInfo & { workspace: number; workspaceName: string }
 
 /**
- * Read-only API providers. Each is `<id>://<connectionId>/<target>` as a root and
- * file ref; the adapter lives in src/main/providers/<id>. Reads only: no remote
- * write path exists for these, and the MCP server cannot read them.
+ * API providers. Each is `<id>://<connectionId>/<target>` as a root and file
+ * ref; the adapter lives in src/main/providers/<id>. Reads render `.env` text;
+ * writes go through the adapter's `apply` behind the plan flow (never through a
+ * file write), and the MCP server cannot read or write them.
  */
 export const PROVIDERS = [
   'ecs',
@@ -177,6 +182,11 @@ export type ApplyRequest = {
   expectedMtime: number
   /** Vault targets: the KV v2 version the plan was built from (the CAS base). */
   expectedVersion?: number
+  /**
+   * The stored receipt the plan came from. Main re-reads both sides and refuses
+   * when either shape moved since. Required for provider targets.
+   */
+  receipt?: number
 }
 export type ApplyResult = {
   written: string[]
@@ -184,8 +194,34 @@ export type ApplyResult = {
   snapshot: number
   /** Vault targets: the version the write moved the secret from and to. */
   version?: { base: number; next: number }
-  /** Vault targets: the new version was read back and matches the approved plan. */
+  /** Vault and provider targets: the target was read back and the written values match the plan. */
   verified?: boolean
+  /** Provider targets: what the read-back could and could not confirm, and any deployment effect. */
+  note?: string
+}
+
+/* ---------- Cross-source project comparison ---------- */
+
+/** One side of a project comparison: a remembered root and a project inside it (null = ungrouped files). */
+export type ProjectSide = { root: string; project: string | null }
+export type ProjectCompareRequest = { left: ProjectSide; right: ProjectSide }
+/** One matched environment file pair with its receipt, or the reason the compare failed. */
+export type PairReceipt = {
+  /** The relative environment-file identity both files share (see shared/pairing.ts). */
+  id: string
+  left: EnvFileInfo
+  right: EnvFileInfo
+  receipt: DriftReceipt | null
+  error: string | null
+}
+export type ProjectCompareResult = {
+  left: ProjectSide & { files: number }
+  right: ProjectSide & { files: number }
+  pairs: PairReceipt[]
+  onlyLeft: EnvFileInfo[]
+  onlyRight: EnvFileInfo[]
+  /** Files sharing an identity with another file on their side: never paired. */
+  ambiguous: EnvFileInfo[]
 }
 
 /* ---------- HashiCorp Vault KV v2 ---------- */
@@ -459,4 +495,8 @@ export type PlumbrApi = {
   awsProfiles: () => Promise<string[]>
   /** Clusters, or one cluster's services and running tasks with their containers. */
   ecsDiscover: (req: EcsDiscoverRequest) => Promise<EcsDiscovery>
+  /** Every remembered root of every source (metadata only), for the cross-source picker. */
+  rootsAll: () => Promise<SourceRoot[]>
+  /** Scan two projects (any two sources), pair their environment files and compare each pair. */
+  projectCompare: (req: ProjectCompareRequest) => Promise<ProjectCompareResult>
 }

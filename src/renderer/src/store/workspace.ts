@@ -4,9 +4,13 @@ import type { DriftReceipt } from '@shared/drift'
 import type {
   DockerSourceSpec,
   EnvFileInfo,
+  PairReceipt,
+  ProjectCompareResult,
+  ProjectSide,
   ProviderConnectSpec,
   RootInfo,
   ScanResult,
+  SourceRoot,
   VaultSourceSpec,
   Workspace
 } from '@shared/channels'
@@ -94,6 +98,19 @@ type State = {
   deleteWorkspace: (id: number) => Promise<void>
   /** Granted roots: local folders and ssh://host/path. */
   roots: RootInfo[]
+  /** Every root of every source (metadata only), for cross-source comparison and labels. */
+  allRoots: SourceRoot[]
+  /** Source label for any root, active or not. */
+  labelFor: (root: string) => string
+  /** Cross-source project comparison: the two chosen sides and the last result. */
+  projectSides: { left: ProjectSide | null; right: ProjectSide | null }
+  projectResult: ProjectCompareResult | null
+  projectComparing: boolean
+  pickProjectSide: (side: 'left' | 'right', s: ProjectSide | null) => void
+  /** Scan both projects fresh, pair their environment files and compare each pair. */
+  compareProjects: () => Promise<void>
+  /** Drill into one pair: it becomes the A/B receipt. */
+  openPair: (pair: PairReceipt) => void
   /** Files from every root, merged. `scan.root` is '' when several roots are granted. */
   scan: ScanResult | null
   scanning: boolean
@@ -185,8 +202,11 @@ export const useWorkspace = create<State>((set, get) => ({
   workspaces: [],
   workspace: 1,
   loadWorkspaces: async () => {
-    const { active, all } = await window.plumbr.listWorkspaces()
-    set({ workspaces: all, workspace: active })
+    const [{ active, all }, allRoots] = await Promise.all([
+      window.plumbr.listWorkspaces(),
+      window.plumbr.rootsAll()
+    ])
+    set({ workspaces: all, workspace: active, allRoots })
   },
   switchWorkspace: async (id) => {
     if (get().viewerDirty && !window.confirm('Discard unsaved changes to the open file?')) return
@@ -200,6 +220,8 @@ export const useWorkspace = create<State>((set, get) => ({
       left: null,
       right: null,
       receipt: null,
+      projectSides: { left: null, right: null },
+      projectResult: null,
       error: null,
       viewerDirty: false,
       openFile: null,
@@ -225,6 +247,41 @@ export const useWorkspace = create<State>((set, get) => ({
     if (wasActive) await get().switchWorkspace(get().workspace)
   },
   roots: [],
+  allRoots: [],
+  labelFor: (root) => get().allRoots.find((r) => r.path === root)?.label ?? root,
+  projectSides: { left: null, right: null },
+  projectResult: null,
+  projectComparing: false,
+  pickProjectSide: (side, s) =>
+    set((st) => ({ projectSides: { ...st.projectSides, [side]: s }, projectResult: null })),
+  compareProjects: async () => {
+    const { left, right } = get().projectSides
+    if (!left || !right) return
+    set({ projectComparing: true, error: null })
+    try {
+      const projectResult = await window.plumbr.projectCompare({ left, right })
+      const now = get()
+      if (now.projectSides.left !== left || now.projectSides.right !== right) return
+      // The open pair may come from a source the rescan does not cover (inactive source):
+      // re-point it at the fresh metadata (mtime/version) so the next apply quotes the truth.
+      const pair = projectResult.pairs.find(
+        (p) => p.left.path === now.left?.path && p.right.path === now.right?.path
+      )
+      set(pair ? { projectResult, left: pair.left, right: pair.right } : { projectResult })
+    } catch (e) {
+      set({ error: message(e) })
+    } finally {
+      set({ projectComparing: false })
+    }
+  },
+  openPair: (pair) =>
+    set({
+      left: pair.left,
+      right: pair.right,
+      receipt: pair.receipt,
+      error: null,
+      page: 'receipt'
+    }),
   scan: null,
   scanning: false,
   error: null,
@@ -268,6 +325,8 @@ export const useWorkspace = create<State>((set, get) => ({
       left: null,
       right: null,
       receipt: null,
+      projectSides: { left: null, right: null },
+      projectResult: null,
       error: null,
       page: 'workspace'
     }),
@@ -467,10 +526,14 @@ export const useWorkspace = create<State>((set, get) => ({
       set({ scan })
       // Selections may point at files that no longer exist.
       // Re-point the pair at the fresh metadata (mtime/size) or drop files that vanished.
+      // A side from another source (cross-source pair) is not in this scan and is kept as is.
       const byPath = new Map(scan.files.map((f) => [f.path, f]))
+      const active = new Set(roots.map((r) => r.path))
+      const repoint = (f: EnvFileInfo | null): EnvFileInfo | null =>
+        f && active.has(f.root) ? (byPath.get(f.path) ?? null) : f
       const { left, right } = get()
-      const l = left ? (byPath.get(left.path) ?? null) : null
-      const r = right ? (byPath.get(right.path) ?? null) : null
+      const l = repoint(left)
+      const r = repoint(right)
       if ((left && !l) || (right && !r)) set({ left: l, right: r, receipt: null })
       else set({ left: l, right: r })
       await get().openProject(keep)

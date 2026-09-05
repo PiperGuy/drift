@@ -21,7 +21,10 @@ type SmApi = import('./sm').SmApi
 const { awsError } = await import('./creds')
 
 /** In-memory Secrets Manager: names → string/binary, plus the auth the adapter asked for. */
-const secrets = new Map<string, { string?: string; binary?: boolean; changed: number }>([
+type Secret = { string?: string; binary?: boolean; changed: number }
+const versions = new Map<string, { id: string; string: string }[]>()
+const puts: { name: string; token: string; string: string }[] = []
+const secrets = new Map<string, Secret>([
   [
     'prod/api',
     {
@@ -67,7 +70,7 @@ const fake = (auth: { region: string; profile: string | null }): SmApi => {
         nextToken: from + 2 < all.length ? String(from + 2) : undefined
       }
     },
-    get: async (name) => {
+    get: async (name, versionId) => {
       const s = secrets.get(name)
       if (!s)
         throw Object.assign(new Error("Secrets Manager can't find the specified secret."), {
@@ -80,7 +83,41 @@ const fake = (auth: { region: string; profile: string | null }): SmApi => {
           ),
           { name: 'AccessDeniedException' }
         )
-      return s.binary ? { binary: true, string: undefined } : { binary: false, string: s.string }
+      const vs = versions.get(name) ?? [{ id: `v0-${name}`, string: s.string ?? '' }]
+      const v = versionId ? vs.find((x) => x.id === versionId) : vs[vs.length - 1]
+      if (!v)
+        throw Object.assign(new Error('version not found'), { name: 'ResourceNotFoundException' })
+      return s.binary
+        ? { binary: true, string: undefined, versionId: v.id }
+        : { binary: false, string: v.string, versionId: v.id }
+    },
+    put: async (name, string, token) => {
+      puts.push({ name, token, string })
+      if (auth.profile === 'denied')
+        throw Object.assign(
+          new Error(
+            'User: arn:aws:iam::123:user/x is not authorized to perform: secretsmanager:PutSecretValue'
+          ),
+          { name: 'AccessDeniedException' }
+        )
+      const s = secrets.get(name)!
+      const vs = versions.get(name) ?? [{ id: `v0-${name}`, string: s.string ?? '' }]
+      // A racing writer slipped a version in between the adapter's read and this put.
+      if (auth.profile === 'racer') vs.push({ id: 'v-someone-else', string: '{"RACE":"1"}' })
+      vs.push({ id: token, string })
+      versions.set(name, vs)
+      s.string = string
+      s.changed = 1700009999000
+      return { versionId: token }
+    },
+    stages: async (name) => {
+      const vs = versions.get(name) ?? [{ id: `v0-${name}`, string: '' }]
+      const out: Record<string, string[]> = {}
+      vs.forEach((v, i) => {
+        out[v.id] =
+          i === vs.length - 1 ? ['AWSCURRENT'] : i === vs.length - 2 ? ['AWSPREVIOUS'] : []
+      })
+      return out
     }
   }
 }
@@ -311,4 +348,82 @@ test('update source: a prefix source stays a prefix source when reconnected from
   } finally {
     secrets.delete('prod')
   }
+})
+
+// ---------- writes ----------
+const { providerBackendFor } = await import('../../fs')
+const apply = (
+  ref: string,
+  entries: { key: string; value: string }[],
+  expectedMtime = 0,
+  token = 'unit-token-0123456789abcdef0123456789'
+): Promise<import('../../fs').ProviderWriteResult> =>
+  providerBackendFor(parseRef(ref) as import('../../fs').ProviderRef).apply!(
+    parseRef(ref) as import('../../fs').ProviderRef,
+    { entries, expectedMtime, token }
+  )
+
+test('write: a new version keeps every other key (types and nested values), uses the client token, verifies by read-back', async () => {
+  puts.length = 0
+  const r = await apply(
+    `${root}/api`,
+    [
+      { key: 'PORT', value: '6000' },
+      { key: 'NEW', value: 'x' }
+    ],
+    1700000000000
+  )
+  assert.deepEqual(r.written, ['PORT', 'NEW'])
+  assert.equal(r.verified, true)
+  assert.deepEqual(r.version, { base: 1700000000000, next: 1700009999000 })
+  assert.equal(puts.length, 1)
+  assert.equal(puts[0].token, 'unit-token-0123456789abcdef0123456789')
+  assert.deepEqual(JSON.parse(puts[0].string), {
+    DATABASE_URL: 'postgres://sm',
+    PORT: '6000',
+    DEBUG: false,
+    nested: { a: 1 },
+    'bad key': 'x',
+    NEW: 'x'
+  })
+  assert.match(await readText(`${root}/api`), /\nPORT=6000\n/)
+})
+
+test('write: stale plan, non-object secrets and access denied are refused; nothing is retried', async () => {
+  puts.length = 0
+  await assert.rejects(apply(`${root}/api`, [{ key: 'A', value: '1' }], 1), /changed since/)
+  await assert.rejects(
+    apply(`${root}/plain`, [{ key: 'A', value: '1' }]),
+    /JSON object secrets only/
+  )
+  await assert.rejects(apply(`${root}/blob`, [{ key: 'A', value: '1' }]), /binary secret/)
+  assert.equal(puts.length, 0)
+  const denied = await connectSecretsManager(store, {
+    provider: 'aws-sm',
+    name: '',
+    region: 'us-east-1',
+    profile: 'denied',
+    secret: 'prod/api'
+  })
+  grantRoot(denied.root.path)
+  await assert.rejects(
+    apply(`${denied.root.path}`, [{ key: 'A', value: '1' }]),
+    /not authorized.*PutSecretValue/
+  )
+  assert.equal(puts.length, 1)
+})
+
+test('write: a concurrent writer between re-read and put is detected and reported, never hidden', async () => {
+  const racer = await connectSecretsManager(store, {
+    provider: 'aws-sm',
+    name: '',
+    region: 'us-east-1',
+    profile: 'racer',
+    secret: 'prod/worker'
+  })
+  grantRoot(racer.root.path)
+  const r = await apply(racer.root.path, [{ key: 'QUEUE', value: 'jobs2' }])
+  assert.deepEqual(r.written, ['QUEUE'])
+  assert.equal(r.verified, false)
+  assert.match(r.note ?? '', /another write.*between/i)
 })

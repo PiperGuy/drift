@@ -33,7 +33,16 @@ export const ApplyRequestSchema = z.object({
   right: z.string().min(1),
   keys: z.array(z.string().min(1)).min(1).max(5000),
   expectedMtime: z.number(),
-  expectedVersion: z.number().int().positive().optional()
+  expectedVersion: z.number().int().positive().optional(),
+  receipt: z.number().int().positive().optional()
+})
+const ProjectSideSchema = z.object({
+  root: z.string().min(1).max(4096),
+  project: z.string().min(1).max(1024).nullable()
+})
+export const ProjectCompareRequestSchema = z.object({
+  left: ProjectSideSchema,
+  right: ProjectSideSchema
 })
 export const VaultSourceSpecSchema = z.object({
   name: z.string().max(60).default(''),

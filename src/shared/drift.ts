@@ -29,6 +29,8 @@ export type DriftStatus = 'same' | 'changed' | 'missing' | 'extra' | 'blank' | '
 export type DriftRow = { key: string; status: DriftStatus }
 
 export type DriftReceipt = {
+  /** Set by main once stored: the plan id an apply must quote so main can check nothing moved since. */
+  id?: number
   left: string
   right: string
   rows: DriftRow[]

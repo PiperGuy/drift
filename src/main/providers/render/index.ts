@@ -4,6 +4,8 @@ import {
   registerProviderBackend,
   type EnvRead,
   type ProviderRef,
+  type ProviderWrite,
+  type ProviderWriteResult,
   type Stat
 } from '../../fs'
 import type { Store } from '../../store'
@@ -16,14 +18,19 @@ import type {
 import { apiRequest, expectJson, paginate, ProviderError, type ApiConfig } from '../http'
 import { connectionFor, saveConnection, secretFor } from '../connection'
 import { renderEnv } from '../envtext'
+import { applyEach, unconfirmed, verdict } from '../writekit'
 
 /**
- * Render environment groups and service variables, read-only. One API key =
- * one source listing every env group (`env-groups/<name>/.env`) and service
+ * Render environment groups and service variables. One API key = one source
+ * listing every env group (`env-groups/<name>/.env`) and service
  * (`services/<name>/.env`) the key can see. Values come back from the API.
  *
  * API (api-docs.render.com, checked 2026-09): Bearer key; list endpoints
  * return `[{ cursor, <item> }]` and page with `cursor` = last item's cursor.
+ * Writes: `PUT /services/{id}/env-vars/{key}` and `PUT /env-groups/{id}/env-vars/{key}`
+ * with `{ value }` add or update one variable and return `{ key, value }`.
+ * Render has no per-variable timestamp or version, so the plan guard in
+ * write.ts (both shapes re-read right before the call) is the staleness check.
  */
 export const RENDER_API = 'https://api.render.com/v1'
 type Cfg = { baseUrl: string; ownerName: string }
@@ -111,7 +118,7 @@ async function backendReadEnv(r: ProviderRef): Promise<EnvRead> {
   )
 }
 
-// Render's variable endpoints carry no timestamps: the source is read-only, so mtime is informational.
+// Render's variable endpoints carry no timestamps; the plan guard (shape re-read) covers staleness.
 const backendStat = async (): Promise<Stat> => ({ mtimeMs: 0, size: 0 })
 
 async function listBoth(a: ApiConfig): Promise<{ services: Service[]; groups: Group[] }> {
@@ -143,13 +150,64 @@ async function backendScan(root: string, r: ProviderRef): Promise<ScanResult> {
   )
 }
 
+async function currentValues(
+  a: ApiConfig,
+  f: ReturnType<typeof parseFile>
+): Promise<Map<string, string>> {
+  if (f.kind === 'services') {
+    const vars = await listAll<'envVar', EnvVar>(
+      a,
+      `/services/${encodeURIComponent(f.id)}/env-vars`,
+      'envVar',
+      `Render service ${f.id} variables`
+    )
+    return new Map(vars.map((v) => [v.key, v.value ?? '']))
+  }
+  const g = expectJson(
+    await apiRequest(a, { method: 'GET', path: `/env-groups/${encodeURIComponent(f.id)}` }),
+    `Render env group ${f.id}`
+  ) as { envVars?: EnvVar[] }
+  return new Map((g.envVars ?? []).map((v) => [v.key, v.value ?? '']))
+}
+
+async function backendApply(r: ProviderRef, w: ProviderWrite): Promise<ProviderWriteResult> {
+  const { a } = cfgFor(requireStore(), r.connectionId)
+  const f = parseFile(r)
+  const what = f.kind === 'services' ? `Render service ${f.id}` : `Render env group ${f.id}`
+  const written = await applyEach(w.entries, async ({ key, value }) => {
+    const res = expectJson(
+      await apiRequest(a, {
+        method: 'PUT',
+        path: `/${f.kind}/${encodeURIComponent(f.id)}/env-vars/${encodeURIComponent(key)}`,
+        body: { value }
+      }),
+      `${what} variable ${key}`
+    ) as { key?: string } | null
+    if (!res || res.key !== key)
+      throw new ProviderError('malformed', `${what}: the response did not echo the variable.`)
+  })
+  const back = await currentValues(a, f)
+  const missing = unconfirmed(w.entries, (k) => back.get(k))
+  return {
+    written,
+    ...verdict(
+      w.entries,
+      missing,
+      f.kind === 'services'
+        ? 'Render redeploys the service when its environment changes (unless auto-deploy is off).'
+        : 'Render redeploys every service linked to this env group (unless auto-deploy is off).'
+    )
+  }
+}
+
 export function registerRender(store: Store): void {
   storeRef = store
   registerProviderBackend('render', {
     readEnv: backendReadEnv,
     readText: (r) => backendReadEnv(r).then((e) => e.text),
     stat: backendStat,
-    scan: backendScan
+    scan: backendScan,
+    apply: backendApply
   })
 }
 
@@ -177,7 +235,7 @@ export async function connectRender(
   const saved = saveConnection(store, 'render', label, cfg, token, spec.storage)
   return {
     root: { path: providerRef('render', saved.id, ''), kind: 'render', label },
-    summary: `${services.length} service${services.length === 1 ? '' : 's'} · ${groups.length} env group${groups.length === 1 ? '' : 's'} · read-only`,
+    summary: `${services.length} service${services.length === 1 ? '' : 's'} · ${groups.length} env group${groups.length === 1 ? '' : 's'}`,
     warnings: saved.warning ? [saved.warning] : []
   }
 }

@@ -23,7 +23,18 @@ const { registerVercel, connectVercel } = await import('./index')
 const { OPAQUE_FINGERPRINT, OPAQUE_VALUE } = await import('@shared/drift')
 
 const TOKEN = 'vercel-unit-token-not-real'
-const envs = [
+type V = {
+  id: string
+  key: string
+  value?: string
+  type: string
+  target: string[]
+  gitBranch?: string
+  updatedAt: number
+}
+const writes: [string, string, unknown][] = []
+let nextId = 100
+const envs: V[] = [
   {
     id: 'e1',
     key: 'DATABASE_URL',
@@ -77,6 +88,40 @@ const server = createServer((req, res) => {
   if (req.headers['authorization'] !== `Bearer ${TOKEN}`)
     return json(403, { error: { code: 'forbidden', message: 'Not authorized' } })
   const m = /^\/v(?:9|10)\/projects\/([^/]+)(\/env)?$/.exec(url.pathname)
+  const w = /^\/v(9|10)\/projects\/prj_1\/env(?:\/([^/]+))?$/.exec(url.pathname)
+  if (w && (req.method === 'POST' || req.method === 'PATCH')) {
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => chunks.push(c))
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as Partial<V>
+      writes.push([req.method!, url.pathname + url.search, body])
+      if (body.key === 'UNAUTH')
+        return json(401, { error: { code: 'unauthorized', message: 'no' } })
+      if (body.key === 'REJECT')
+        return json(201, {
+          created: undefined,
+          failed: [{ error: { code: 'invalid', message: 'value too long', key: 'REJECT' } }]
+        })
+      if (req.method === 'PATCH') {
+        const v = envs.find((e) => e.id === w[2])
+        if (!v) return json(404, { error: { code: 'not_found', message: 'env not found' } })
+        Object.assign(v, body, { updatedAt: 1800000000000 })
+        return json(200, v)
+      }
+      const created: V = {
+        id: `n${nextId++}`,
+        key: body.key!,
+        value: body.value,
+        type: body.type ?? 'encrypted',
+        target: body.target ?? [],
+        ...(body.gitBranch ? { gitBranch: body.gitBranch } : {}),
+        updatedAt: 1800000000000
+      }
+      envs.push(created)
+      json(201, { created, failed: [] })
+    })
+    return
+  }
   if (!m) return json(404, { error: { code: 'not_found', message: 'nope' } })
   const proj =
     m[1] === 'prj_1' || m[1] === 'web'
@@ -227,4 +272,103 @@ test('apply from Vercel into a file: readable vars copy, a sensitive (names-only
   const after = readFileSync(target, 'utf8')
   assert.match(after, /DATABASE_URL=postgres:\/\/prod/)
   assert.ok(!after.includes(OPAQUE_VALUE) && !after.includes('STRIPE_KEY'))
+})
+
+// ---------- writes ----------
+const { providerBackendFor } = await import('../../fs')
+const apply = (
+  ref: string,
+  entries: { key: string; value: string }[],
+  expectedMtime = 0
+): Promise<import('../../fs').ProviderWriteResult> =>
+  providerBackendFor(parseRef(ref) as import('../../fs').ProviderRef).apply!(
+    parseRef(ref) as import('../../fs').ProviderRef,
+    { entries, expectedMtime, token: 'unit-token' }
+  )
+const prod = (): string => `${root}/.env.production`
+const branch = (): string => `${root}/branches/feature%2Fx/.env.preview`
+
+test('write: a stale plan is refused before any request; a system variable is refused by name', async () => {
+  writes.length = 0
+  await assert.rejects(apply(prod(), [{ key: 'DATABASE_URL', value: 'x' }], 1), /changed since/)
+  await assert.rejects(
+    apply(prod(), [{ key: 'VERCEL_URL', value: 'x' }], 1700000100000),
+    /VERCEL_URL.*system/i
+  )
+  assert.equal(writes.length, 0)
+})
+
+test('write: single-target var is PATCHed in place, a new key is POSTed to that target only', async () => {
+  writes.length = 0
+  const r = await apply(
+    prod(),
+    [
+      { key: 'DATABASE_URL', value: 'postgres://new' },
+      { key: 'NEW_KEY', value: 'n' }
+    ],
+    1700000100000
+  )
+  assert.deepEqual(r.written, ['DATABASE_URL', 'NEW_KEY'])
+  assert.equal(r.verified, true)
+  assert.match(r.note ?? '', /redeploy|deployment/i)
+  assert.deepEqual(writes, [
+    [
+      'PATCH',
+      '/v9/projects/prj_1/env/e1',
+      { value: 'postgres://new', type: 'encrypted', target: ['production'] }
+    ],
+    [
+      'POST',
+      '/v10/projects/prj_1/env',
+      { key: 'NEW_KEY', value: 'n', type: 'encrypted', target: ['production'] }
+    ]
+  ])
+  assert.match(await readText(prod()), /\nNEW_KEY=n\n/)
+  assert.ok(!(await readText(`${root}/.env.preview`)).includes('NEW_KEY'))
+})
+
+test('write: a var spanning several targets is split so only the chosen target changes; sensitive stays sensitive and unverifiable', async () => {
+  writes.length = 0
+  const r = await apply(prod(), [{ key: 'STRIPE_KEY', value: 'sk_new' }])
+  assert.deepEqual(r.written, ['STRIPE_KEY'])
+  assert.equal(r.verified, false)
+  assert.match(r.note ?? '', /STRIPE_KEY.*sensitive/i)
+  assert.deepEqual(writes, [
+    ['PATCH', '/v9/projects/prj_1/env/e2', { target: ['preview'] }],
+    [
+      'POST',
+      '/v10/projects/prj_1/env',
+      { key: 'STRIPE_KEY', value: 'sk_new', type: 'sensitive', target: ['production'] }
+    ]
+  ])
+  const e2 = envs.find((e) => e.id === 'e2')!
+  assert.deepEqual(e2.target, ['preview'])
+  assert.ok(envs.some((e) => e.key === 'STRIPE_KEY' && e.target.join() === 'production'))
+})
+
+test('write: branch-scoped preview files keep gitBranch on update and create', async () => {
+  writes.length = 0
+  const r = await apply(branch(), [
+    { key: 'FEATURE', value: 'b2' },
+    { key: 'NEWB', value: 'x' }
+  ])
+  assert.equal(r.verified, true)
+  assert.deepEqual(writes, [
+    [
+      'PATCH',
+      '/v9/projects/prj_1/env/e4',
+      { value: 'b2', type: 'encrypted', target: ['preview'], gitBranch: 'feature/x' }
+    ],
+    [
+      'POST',
+      '/v10/projects/prj_1/env',
+      { key: 'NEWB', value: 'x', type: 'encrypted', target: ['preview'], gitBranch: 'feature/x' }
+    ]
+  ])
+  assert.ok(!(await readText(`${root}/.env.preview`)).includes('NEWB'))
+})
+
+test('write: unauthorized and a `failed` entry stop the apply and name the key', async () => {
+  await assert.rejects(apply(prod(), [{ key: 'UNAUTH', value: 'x' }]), /UNAUTH.*unauthorized/i)
+  await assert.rejects(apply(prod(), [{ key: 'REJECT', value: 'x' }]), /REJECT.*value too long/)
 })

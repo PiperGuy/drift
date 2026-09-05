@@ -28,8 +28,9 @@ import {
   sshConfigHosts,
   sshRef
 } from './fs'
-import type { RootInfo } from '@shared/channels'
-import { compareFiles, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
+import type { RootInfo, SourceRoot } from '@shared/channels'
+import { compareGuarded, envShape, fingerprintKeyPersisted, loadFingerprintKey } from './env'
+import { compareProjects, ensureSourceRoot } from './compare'
 import { openStore } from './store'
 import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
@@ -62,6 +63,7 @@ import {
   DockerHost,
   DockerSourceSpecSchema,
   EcsDiscoverSchema,
+  ProjectCompareRequestSchema,
   ProviderConnectSpecSchema,
   VaultRestoreSchema,
   VaultShapeAtSchema,
@@ -357,6 +359,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     assertUnlocked(store)
     return grantActive()
   })
+  // Every remembered root of every source, for the cross-source picker. Metadata only; nothing is granted here.
+  ipcMain.handle(Channels.rootsAll, (): SourceRoot[] => {
+    assertUnlocked(store)
+    const names = new Map(store.listWorkspaces().map((w) => [w.id, w.name]))
+    return store.listAllRoots().map((r) => ({
+      ...toRoot(store, r.path, r.label),
+      workspace: r.workspaceId,
+      workspaceName: names.get(r.workspaceId) ?? ''
+    }))
+  })
+  ipcMain.handle(Channels.projectCompare, (_e, raw: unknown) => {
+    assertUnlocked(store)
+    return compareProjects(store, ProjectCompareRequestSchema.parse(raw))
+  })
 
   ipcMain.handle(Channels.historyList, () => {
     assertUnlocked(store)
@@ -381,6 +397,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.workspaceScan, async (_e, raw: unknown) => {
     assertUnlocked(store)
     const { root } = ScanRequest.parse(raw)
+    // A remembered root of another source is granted for the session (cross-source picker).
+    ensureSourceRoot(store, root)
     const scan = await scanWorkspace(root)
     store.touchRoot(root)
     store.logEvent('scan', { root }, { files: scan.files.length, projects: scan.projects.length })
@@ -396,11 +414,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.envCompare, async (_e, raw: unknown) => {
     assertUnlocked(store)
     const { left, right, ignore } = CompareRequest.parse(raw)
-    const receipt = await compareFiles(left, right, ignore)
-    const id = store.saveReceipt(receipt)
+    assertGranted(left)
+    assertGranted(right)
+    const { receipt } = await compareGuarded(store, left, right, ignore)
     store.logEvent(
       'compare',
-      { left, right, receipt: id },
+      { left, right, receipt: receipt.id },
       { ...receipt.counts, clean: receipt.clean }
     )
     return receipt
@@ -424,8 +443,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const result = await applyPlan(store, req)
     store.logEvent(
       'apply',
-      { left: req.left, right: req.right, snapshot: result.snapshot },
-      { written: result.written, skipped: result.skipped }
+      { left: req.left, right: req.right, snapshot: result.snapshot, receipt: req.receipt },
+      {
+        written: result.written,
+        skipped: result.skipped,
+        ...(result.verified !== undefined ? { verified: result.verified } : {}),
+        ...(result.version ? { version: result.version } : {})
+      }
     )
     return result
   })

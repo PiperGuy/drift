@@ -18,6 +18,11 @@ const { registerRailway, connectRailway } = await import('./index')
 
 const TOKEN = 'railway-unit-token'
 const PROJECT = { id: 'p-uuid-1', name: 'shop' }
+const apiVars = new Map<string, Record<string, string>>([
+  ['env-prod/svc-api', { DATABASE_URL: 'postgres://prod', PORT: '3000' }],
+  ['env-prod/_', { SHARED: 'yes' }]
+])
+const upserts: unknown[] = []
 const base = await fakeApi((req, url, body, json) => {
   if (url.pathname !== '/graphql/v2') return json(404, { message: 'nope' })
   if (req.headers['authorization'] !== `Bearer ${TOKEN}`)
@@ -43,13 +48,20 @@ const base = await fakeApi((req, url, body, json) => {
       }
     })
   }
+  if (/variableCollectionUpsert\(/.test(query)) {
+    const input = (variables as unknown as { input: Record<string, unknown> }).input
+    upserts.push(input)
+    const vars = input['variables'] as Record<string, string>
+    if ('BOOM' in vars) return json(200, { errors: [{ message: 'Problem processing request' }] })
+    const k = `${input['environmentId']}/${(input['serviceId'] as string | undefined) ?? '_'}`
+    apiVars.set(k, { ...(apiVars.get(k) ?? {}), ...vars })
+    return json(200, { data: { variableCollectionUpsert: true } })
+  }
   if (/variables\(/.test(query)) {
     const v = variables ?? {}
-    if (v['environmentId'] === 'env-prod' && v['serviceId'] === 'svc-api')
-      return json(200, { data: { variables: { DATABASE_URL: 'postgres://prod', PORT: '3000' } } })
-    if (v['environmentId'] === 'env-prod' && !v['serviceId'])
-      return json(200, { data: { variables: { SHARED: 'yes' } } })
-    return json(200, { data: { variables: {} } })
+    return json(200, {
+      data: { variables: apiVars.get(`${v['environmentId']}/${v['serviceId'] ?? '_'}`) ?? {} }
+    })
   }
   json(200, { errors: [{ message: `unhandled ${query}` }] })
 })
@@ -112,4 +124,50 @@ test('errors: GraphQL errors become typed messages without the token', async () 
     ),
     /not found/i
   )
+})
+
+// ---------- writes ----------
+const { providerBackendFor } = await import('../../fs')
+const apply = (
+  ref: string,
+  entries: { key: string; value: string }[]
+): Promise<import('../../fs').ProviderWriteResult> =>
+  providerBackendFor(parseRef(ref) as import('../../fs').ProviderRef).apply!(
+    parseRef(ref) as import('../../fs').ProviderRef,
+    { entries, expectedMtime: 0, token: 'unit-token' }
+  )
+
+test('write: one variableCollectionUpsert per apply, scoped to project/environment/service, then read back', async () => {
+  upserts.length = 0
+  const r = await apply(`${root}/env-prod/svc-api/.env.production`, [
+    { key: 'PORT', value: '4000' },
+    { key: 'NEW', value: 'n' }
+  ])
+  assert.deepEqual(r.written, ['PORT', 'NEW'])
+  assert.equal(r.verified, true)
+  assert.match(r.note ?? '', /redeploy/i)
+  assert.deepEqual(upserts, [
+    {
+      projectId: 'p-uuid-1',
+      environmentId: 'env-prod',
+      serviceId: 'svc-api',
+      variables: { PORT: '4000', NEW: 'n' },
+      replace: false
+    }
+  ])
+  // Shared variables: no serviceId.
+  upserts.length = 0
+  await apply(`${root}/env-prod/_/.env.production`, [{ key: 'SHARED', value: 'no' }])
+  assert.equal((upserts[0] as { serviceId?: string }).serviceId, undefined)
+  assert.match(await readText(`${root}/env-prod/_/.env.production`), /SHARED=no\n/)
+  assert.match(await readText(`${root}/env-prod/svc-api/.env.production`), /PORT=4000\n/)
+})
+
+test('write: a GraphQL error fails the whole apply without retry', async () => {
+  upserts.length = 0
+  await assert.rejects(
+    apply(`${root}/env-prod/svc-api/.env.production`, [{ key: 'BOOM', value: '1' }]),
+    /Problem processing/
+  )
+  assert.equal(upserts.length, 1)
 })
