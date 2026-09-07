@@ -109,9 +109,11 @@ test('add source: shell scrolls instead of overflowing, every source type stays 
   render(<AddSourceDialog onClose={() => {}} />)
   const content = screen.getByRole('dialog', { name: 'Local folder' })
   const form = content.querySelector('form')!
-  // Height is capped to the viewport and the form is the scroll container; the
-  // sidebar stacks above it on narrow widths instead of squeezing the fields.
-  assert.match(content.className, /max-h-\[calc\(100dvh-2rem\)\]/)
+  // Height is fixed (not content-sized) yet capped to the viewport, and the form
+  // is the scroll container; the sidebar stacks above it on narrow widths
+  // instead of squeezing the fields.
+  assert.match(content.className, /(^|\s)h-\[min\(36rem,calc\(100dvh-2rem\)\)\]/)
+  assert.doesNotMatch(content.className, /max-h-/)
   assert.match(content.className, /overflow-hidden/)
   assert.match(form.className, /overflow-y-auto/)
   assert.match(form.className, /min-h-0/)
