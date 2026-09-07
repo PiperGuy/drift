@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/PiperGuy/drift/compare/v0.2.0...v0.2.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* stabilize source dialog layout ([248da9e](https://github.com/PiperGuy/drift/commit/248da9e75c4c679012bf21e1f43a11fd227d80b7))
+* stabilize source dialog layout ([6098208](https://github.com/PiperGuy/drift/commit/60982082e3a65576f4431266fa6437473df2ee88))
+
 ## [0.2.0](https://github.com/PiperGuy/drift/compare/v0.1.0...v0.2.0) (2026-09-05)
 
 ### Features
