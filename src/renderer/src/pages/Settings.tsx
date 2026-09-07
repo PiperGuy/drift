@@ -19,18 +19,6 @@ const THEMES = [
   { id: 'dark', label: 'Dark' }
 ] as const
 
-/** Provider adapters from the site. None exist yet; listed so the shape of the page is honest. */
-const PROVIDERS = [
-  'GitHub Actions',
-  'Vercel',
-  'Railway',
-  'Render',
-  'Dokploy',
-  'Coolify',
-  'AWS Secrets Manager',
-  'HashiCorp Vault KV v2'
-]
-
 function Section({
   title,
   children
@@ -245,26 +233,6 @@ export function SettingsPage(): React.JSX.Element {
                 )}
               </p>
             )}
-          </Row>
-        </Section>
-
-        <Section title="Integrations">
-          <Row label="Connections">
-            <ul className="grid grid-cols-2 gap-1.5">
-              {PROVIDERS.map((p) => (
-                <li
-                  key={p}
-                  className="flex items-center justify-between rounded-md border border-dashed px-2.5 py-1.5 text-xs"
-                >
-                  <span>{p}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">coming soon</span>
-                </li>
-              ))}
-            </ul>
-            <Hint>
-              Tokens will be sealed with the OS keyring and never written in the clear. No provider
-              adapter is built yet, so there is nothing to connect.
-            </Hint>
           </Row>
         </Section>
 

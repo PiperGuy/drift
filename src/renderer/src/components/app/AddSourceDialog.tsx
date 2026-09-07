@@ -517,7 +517,7 @@ export function AddSourceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[minmax(0,1fr)] overflow-hidden p-0 sm:max-w-3xl">
+      <DialogContent className="h-[min(36rem,calc(100dvh-2rem))] grid-rows-[minmax(0,1fr)] overflow-hidden p-0 sm:max-w-3xl">
         <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[13rem_minmax(0,1fr)] sm:grid-rows-[minmax(0,1fr)]">
           <aside
             className="min-w-0 border-b bg-sidebar p-2 sm:overflow-y-auto sm:border-r sm:border-b-0"
