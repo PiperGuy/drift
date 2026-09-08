@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { check, getFileInfo } from 'prettier'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -30,6 +31,28 @@ describe('release-please config', () => {
   it('manifest tracks the exact version in package.json', () => {
     const manifest = json<Record<string, string>>('.release-please-manifest.json')
     expect(manifest['.']).toBe(json<PackageJson>('package.json').version)
+  })
+})
+
+describe('generated CHANGELOG.md vs prettier', () => {
+  // release-please writes `* ` bullets and a doubled blank line before each
+  // section, and Prettier's markdown printer has no option to keep either. So
+  // the generated file is excluded from the format gate instead of being
+  // hand-formatted after every release PR, while every authored .md stays checked.
+  const ignored = async (file: string): Promise<boolean> =>
+    (await getFileInfo(join(root, file), { ignorePath: join(root, '.prettierignore') })).ignored
+
+  it('release-please output is not prettier-clean, so the gate would reject every release PR', async () => {
+    const releasePleaseShape =
+      '# Changelog\n\n## [0.2.1](c) (2026-09-07)\n\n\n### Bug Fixes\n\n* fix a thing ([abc](u))\n'
+    expect(await check(releasePleaseShape, { filepath: 'CHANGELOG.md' })).toBe(false)
+  })
+
+  it('ignores only the generated changelog, not authored markdown', async () => {
+    expect(await ignored('CHANGELOG.md')).toBe(true)
+    for (const authored of ['README.md', 'docs/e2e.md', 'tests/versioning.test.ts']) {
+      expect(await ignored(authored), authored).toBe(false)
+    }
   })
 })
 
