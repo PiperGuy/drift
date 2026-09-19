@@ -20,6 +20,7 @@ type Step = {
 }
 type Job = {
   'runs-on'?: string
+  needs?: string | string[]
   permissions?: Record<string, string>
   if?: string
   steps: Step[]
@@ -157,6 +158,24 @@ describe('release-please.yml', () => {
     })
     // The hand-off job may only start other workflows.
     expect(perms).toContainEqual({ actions: 'write' })
+  })
+
+  it('creates no tag or release until the merged commit passes the full quality gate', () => {
+    // release.yml runs `npm run check` at the tag; if that fails the release is
+    // already published and stays without installers (v0.2.0, v0.2.1).
+    const gate = wf.jobs.check
+    const all = gate.steps.map((s) => s.run ?? '').join('\n')
+    expect(all).toContain('npm ci')
+    expect(all).toContain('npm run check')
+    expect(gate.permissions).toEqual({ contents: 'read' })
+    expect(gate.if).toBeUndefined()
+    for (const s of gate.steps) expect(s).not.toHaveProperty('continue-on-error')
+    expect(wf.jobs['release-please'].needs).toBe('check')
+    // The action reads main's current head, so an older run must not release a
+    // newer, still unchecked commit on the strength of its own green check.
+    const release = steps(wf).find((s) => s.uses?.startsWith('googleapis/release-please-action'))
+    expect(release?.if).toContain('steps.head.outputs.sha == github.sha')
+    expect(wf.jobs.package.needs).toBe('release-please')
   })
 
   it('hands the new tag to the existing release workflow, only once one exists', () => {

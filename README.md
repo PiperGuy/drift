@@ -185,7 +185,9 @@ remains intentionally unavailable** — no release builds or ships it.
 reads the conventional commits that landed on main and keeps a single **release PR**
 open (updating it as more merges arrive) with the next SemVer version written into
 `package.json` and `package-lock.json`, and the notes prepended to `CHANGELOG.md`.
-**Merging that release PR is the release**: Release Please creates the `vX.Y.Z` tag
+**Merging that release PR is the release**: once the merged commit passes
+`npm run check` (the workflow's `check` job; a red gate means no tag and no empty
+release), Release Please creates the `vX.Y.Z` tag
 and the GitHub release with the changelog as its notes, then dispatches
 `.github/workflows/release.yml` at that tag (a tag created with the workflow token
 cannot fire `on: push: tags` itself, so the dispatch is explicit). `release.yml`
