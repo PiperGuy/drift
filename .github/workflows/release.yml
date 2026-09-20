@@ -13,7 +13,9 @@ name: Release
 # Without a draft for the tag the builds fail: for a manually pushed v* tag,
 # create the draft first (README, "Emergency manual release"). Windows is
 # deliberately not built. workflow_dispatch from a branch builds and checks the
-# installers without publishing; they land as run artifacts.
+# installers without publishing. It deliberately stores no Actions artifacts:
+# required-file checks above are the branch-run evidence, and artifact quota
+# exhaustion must never make a packaging verification fail.
 on:
   push:
     tags: ['v*']
@@ -100,17 +102,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           FILES: ${{ matrix.files }}
-      - uses: actions/upload-artifact@v4
-        if: ${{ github.ref_type != 'tag' }}
-        with:
-          name: drift-${{ matrix.os }}
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.dmg
-            dist/*.zip
-          if-no-files-found: error
-          retention-days: 7
   publish:
     # No status function in `if`, so success() is implied: every build leg green.
     needs: build

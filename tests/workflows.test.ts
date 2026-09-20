@@ -156,11 +156,11 @@ describe('release.yml', () => {
     for (const s of build.steps) {
       expect(s).not.toHaveProperty('continue-on-error')
       if (s !== upload) expect(s.env ?? {}).not.toHaveProperty('GH_TOKEN')
-      // Only the run-artifact convenience is conditional, and never on a tag:
-      // a release must not depend on the Actions artifact storage quota.
-      if (s.uses?.startsWith('actions/upload-artifact')) expect(s.if).toContain("!= 'tag'")
-      else expect(s.if).toBeUndefined()
+      expect(s.if).toBeUndefined()
     }
+    // Branch dispatches validate installers in the build step, but never touch
+    // Actions artifact storage; tag releases upload directly to the draft.
+    expect(build.steps.some((s) => s.uses?.startsWith('actions/upload-artifact'))).toBe(false)
     expect(JSON.stringify(wf)).not.toContain('download-artifact')
   })
 

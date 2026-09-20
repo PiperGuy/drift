@@ -244,7 +244,7 @@ triggers `release.yml` directly, which fills and publishes that draft exactly as
 (without a draft the builds fail rather than publish anything). There is deliberately
 no npm script that versions or pushes tags from a laptop.
 `Actions → Release → Run workflow` on a branch still builds without publishing: the
-same required-installer check runs, and installers are attached to the run as artifacts.
+same required-installer check runs, but it stores no Actions artifacts.
 
 ## Sources and the sidebar
 
