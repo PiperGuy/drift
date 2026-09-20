@@ -247,12 +247,17 @@ esac
         (opts.assets ?? []).map((f) => `${f} ${size(f)}\n`).join('')
       )
       writeFileSync(join(dir, 'log'), '')
-      const res = spawnSync('bash', ['-c', script], {
+      // Node hands children a socket as stdin, and bash sources ~/.bashrc when
+      // stdin is a socket; on the macOS runner that reorders PATH past the stub.
+      // So: no stdin, Actions' own bash flags, and a HOME that proves it.
+      writeFileSync(join(dir, '.bashrc'), 'echo "::error::.bashrc was sourced"; exit 97\n')
+      const res = spawnSync('bash', ['--noprofile', '--norc', '-c', script], {
         cwd: dir,
         encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
-          HOME: process.env.HOME ?? dir,
+          HOME: dir,
           TAG: 'v0.2.2',
           GH_REPO: 'PiperGuy/drift',
           GITHUB_SHA: SHA,
