@@ -126,34 +126,58 @@ describe('main-artifacts.yml', () => {
 describe('release.yml', () => {
   const wf = load('release.yml')
   const { build, publish } = wf.jobs
+  const upload = build.steps.find((s) => s.run?.includes('gh release upload'))
+  const rows = build.strategy?.matrix?.include ?? []
 
   it('builds tags for exactly macOS and Linux', () => {
-    const rows = jobs(wf).flatMap((j) => j.strategy?.matrix?.include ?? [])
     expect(rows.map((r) => r.os).sort()).toEqual(['macos-latest', 'ubuntu-latest'])
   })
 
-  it('gates and packages the tagged commit itself, with no way to publish from a build', () => {
-    // Read-only token; electron-builder's GitHub publisher skips silently in
-    // several cases (electron-publish gitHubPublisher), so it never uploads.
+  it('gates and packages the tagged commit itself, then uploads, in that order', () => {
     expect(wf.permissions).toEqual({ contents: 'read' })
-    expect(build.permissions).toBeUndefined()
     // No `ref` override: the run is pinned to the commit the tag named at dispatch.
-    expect(build.steps.find((s) => s.uses?.startsWith('actions/checkout'))?.with).toBeUndefined()
+    // No persisted credentials: npm and electron-builder never see the write token.
+    expect(build.steps.find((s) => s.uses?.startsWith('actions/checkout'))?.with).toEqual({
+      'persist-credentials': false
+    })
     const order = build.steps.map((s) => s.run ?? '')
     const gate = order.indexOf('npm run check')
+    const pack = order.findIndex((r) => r.includes('--publish never'))
     expect(order.indexOf('npm ci')).toBeGreaterThanOrEqual(0)
     expect(gate).toBeGreaterThan(order.indexOf('npm ci'))
-    expect(order.findIndex((r) => r.includes('--publish never'))).toBeGreaterThan(gate)
+    expect(pack).toBeGreaterThan(gate)
+    expect(build.steps.indexOf(upload as Step)).toBeGreaterThan(pack)
+    // electron-builder's GitHub publisher skips silently in several cases
+    // (electron-publish gitHubPublisher), so it never uploads.
     expect(matrixRuns(wf).filter((r) => r.includes('--publish'))).toEqual([
       'npm run build:linux -- --publish never',
       'npm run build:mac -- --publish never'
     ])
     for (const s of build.steps) {
-      expect(s.if).toBeUndefined()
       expect(s).not.toHaveProperty('continue-on-error')
-      expect(s.env ?? {}).not.toHaveProperty('GH_TOKEN')
+      if (s !== upload) expect(s.env ?? {}).not.toHaveProperty('GH_TOKEN')
+      // Only the run-artifact convenience is conditional, and never on a tag:
+      // a release must not depend on the Actions artifact storage quota.
+      if (s.uses?.startsWith('actions/upload-artifact')) expect(s.if).toContain("!= 'tag'")
+      else expect(s.if).toBeUndefined()
     }
-    for (const up of uploads(wf)) expect(up.with?.['if-no-files-found']).toBe('error')
+    expect(JSON.stringify(wf)).not.toContain('download-artifact')
+  })
+
+  it('requires all four installer formats and both updater manifests', () => {
+    const files = rows.map((r) => r.files).join(' ')
+    for (const glob of [
+      '*.dmg',
+      '*.zip',
+      'latest-mac.yml',
+      '*.AppImage',
+      '*.deb',
+      'latest-linux.yml'
+    ]) {
+      expect(files).toContain(`dist/${glob}`)
+      expect(publish.steps.at(-1)?.run).toContain(glob)
+    }
+    expect(upload?.env?.FILES).toBe('${{ matrix.files }}')
   })
 
   it('publishes only from a tag, only after every build leg succeeded', () => {
@@ -161,37 +185,38 @@ describe('release.yml', () => {
     // A status function (always(), failure(), !cancelled()) would drop the implied success().
     expect(publish.if).toBe("${{ github.ref_type == 'tag' }}")
     expect(publish).not.toHaveProperty('continue-on-error')
-    expect(publish.permissions).toEqual({ contents: 'write' })
     for (const s of publish.steps) {
       expect(s.if).toBeUndefined()
       expect(s).not.toHaveProperty('continue-on-error')
     }
-    // The only place any workflow makes a release public.
+    // The only place any workflow creates or un-drafts a release.
     const all = readdirSync(DIR).flatMap((f) => runs(load(f)))
     expect(all.filter((r) => /draft=false|gh release (create|edit)/.test(r))).toEqual([
       publish.steps.at(-1)?.run
     ])
   })
 
-  describe('publish script', () => {
+  describe('release scripts', () => {
     const SHA = 'a'.repeat(40)
-    const BUILT = [
+    const LINUX = ['drift-0.2.2.AppImage', 'drift_0.2.2_amd64.deb', 'latest-linux.yml']
+    const MAC = [
       'drift-0.2.2.dmg',
+      'drift-0.2.2.dmg.blockmap',
       'Drift-0.2.2-arm64-mac.zip',
-      'latest-mac.yml',
-      'drift-0.2.2.AppImage',
-      'drift_0.2.2_amd64.deb',
-      'latest-linux.yml'
+      'Drift-0.2.2-arm64-mac.zip.blockmap',
+      'latest-mac.yml'
     ]
+    const size = (f: string): number => `bytes of ${f}`.length
     const GH = `#!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"
 case "$1 $2" in
   'api '*) echo "$STUB_TAG_SHA" ;;
   'release view')
+    [ "$STUB_IS_DRAFT" = missing ] && exit 1
     case "$*" in
       *isDraft*) echo "$STUB_IS_DRAFT" ;;
-      *assets*) cat "$STUB_ASSETS" ;;
-      *) [ "$STUB_EXISTS" = 1 ] ;;
+      *'size > 0'*) cut -d' ' -f1 "$STUB_ASSETS" ;;
+      *) cat "$STUB_ASSETS" ;;
     esac ;;
   'release upload')
     shift 3
@@ -203,92 +228,138 @@ case "$1 $2" in
     done ;;
 esac
 `
-    /** Runs the workflow's own script text against a stub `gh`; returns exit code and gh calls. */
+    /** Runs a workflow step's own script text against a stub `gh`; returns exit code and gh calls. */
     const run = (
-      opts: { built?: string[]; env?: Record<string, string> } = {}
+      script: string,
+      opts: { built?: string[]; assets?: string[]; env?: Record<string, string> } = {}
     ): { status: number | null; calls: string[]; out: string } => {
-      const script = publish.steps.at(-1)?.run ?? ''
       // Inputs arrive through `env:` only, so this is the exact text Actions runs.
+      expect(script).not.toBe('')
       expect(script).not.toContain('${{')
-      const dir = mkdtempSync(join(tmpdir(), 'drift-publish-'))
+      const dir = mkdtempSync(join(tmpdir(), 'drift-release-'))
       mkdirSync(join(dir, 'dist'))
       mkdirSync(join(dir, 'bin'))
-      for (const f of opts.built ?? BUILT) writeFileSync(join(dir, 'dist', f), `bytes of ${f}`)
+      for (const f of opts.built ?? []) writeFileSync(join(dir, 'dist', f), `bytes of ${f}`)
       writeFileSync(join(dir, 'bin', 'gh'), GH)
       chmodSync(join(dir, 'bin', 'gh'), 0o755)
-      writeFileSync(join(dir, 'assets'), '')
+      writeFileSync(
+        join(dir, 'assets'),
+        (opts.assets ?? []).map((f) => `${f} ${size(f)}\n`).join('')
+      )
+      writeFileSync(join(dir, 'log'), '')
       const res = spawnSync('bash', ['-c', script], {
         cwd: dir,
         encoding: 'utf8',
         env: {
           PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+          HOME: process.env.HOME ?? dir,
           TAG: 'v0.2.2',
           GH_REPO: 'PiperGuy/drift',
           GITHUB_SHA: SHA,
+          GITHUB_REF_TYPE: 'tag',
           STUB_LOG: join(dir, 'log'),
           STUB_ASSETS: join(dir, 'assets'),
           STUB_TAG_SHA: SHA,
-          STUB_EXISTS: '1',
           STUB_IS_DRAFT: 'true',
           STUB_DROP: '',
           ...opts.env
         }
       })
-      const calls = readFileSync(join(dir, 'log'), 'utf8').trim().split('\n')
+      const calls = readFileSync(join(dir, 'log'), 'utf8').split('\n').filter(Boolean)
       return { status: res.status, calls, out: res.stdout + res.stderr }
     }
-    const touched = (calls: string[]): string[] =>
-      calls.filter((c) => /^release (upload|edit|create)/.test(c))
+    const wrote = (calls: string[]): string[] =>
+      calls
+        .filter((c) => /^release (upload|edit|create|delete)/.test(c))
+        .map((c) => c.split(' ')[1])
 
-    it('checks the tag, uploads everything, reads it back, and publishes last', () => {
-      const { status, calls, out } = run()
-      expect(out).toBe('')
-      expect(status).toBe(0)
-      expect(calls[0]).toBe('api repos/PiperGuy/drift/commits/tags/v0.2.2 --jq .sha')
-      const upload = calls.findIndex((c) => c.startsWith('release upload v0.2.2 '))
-      const readBack = calls.findIndex((c) => c.includes('--json assets'))
-      expect(upload).toBeGreaterThan(0)
-      for (const f of BUILT) expect(calls[upload]).toContain(`dist/${f}`)
-      expect(readBack).toBeGreaterThan(upload)
-      expect(calls.indexOf('release edit v0.2.2 --draft=false')).toBe(calls.length - 1)
-      expect(calls.at(-1)).toBe('release edit v0.2.2 --draft=false')
-      expect(touched(calls)).toHaveLength(2)
+    describe.each(rows)('build upload ($script)', (row) => {
+      const built = row.script === 'build:mac' ? MAC : LINUX
+      const env = { FILES: row.files }
+      const script = upload?.run ?? ''
+
+      it('checks for the draft, uploads every file, then reads it back', () => {
+        const { status, calls, out } = run(script, { built, env })
+        expect(out).not.toContain('::error::')
+        expect(status).toBe(0)
+        expect(calls[0]).toContain('--json isDraft')
+        expect(calls[1]).toMatch(/^release upload v0\.2\.2 .* --clobber$/)
+        for (const f of built) expect(calls[1]).toContain(`dist/${f}`)
+        expect(calls[2]).toContain('--json assets')
+        expect(wrote(calls)).toEqual(['upload'])
+      })
+
+      // One blockmap still satisfies dist/*.blockmap; every other glob names one file.
+      const sole = built.filter((f) => !f.endsWith('.blockmap'))
+      it.each(sole)('fails before touching the release when %s was not built', (missing) => {
+        const { status, calls, out } = run(script, {
+          built: built.filter((f) => f !== missing),
+          env
+        })
+        expect(status).not.toBe(0)
+        expect(out).toContain('::error::the build produced no ')
+        expect(calls).toEqual([])
+      })
+
+      it('fails when an upload was silently skipped', () => {
+        const drop = built[1]
+        const { status, out } = run(script, { built, env: { ...env, STUB_DROP: drop } })
+        expect(status).not.toBe(0)
+        expect(out).toContain(`${drop} is missing or incomplete`)
+      })
+
+      it.each(['false', 'missing'])('uploads nothing when the draft is %s', (state) => {
+        const { status, calls } = run(script, { built, env: { ...env, STUB_IS_DRAFT: state } })
+        expect(status).not.toBe(0)
+        expect(wrote(calls)).toEqual([])
+      })
+
+      it('on a branch it still requires the installers but never calls gh', () => {
+        const branch = { ...env, GITHUB_REF_TYPE: 'branch' }
+        expect(run(script, { built, env: branch })).toMatchObject({ status: 0, calls: [] })
+        expect(run(script, { built: built.slice(1), env: branch }).status).not.toBe(0)
+      })
     })
 
-    it.each(BUILT)('publishes and uploads nothing when the builds produced no %s', (missing) => {
-      const { status, calls, out } = run({ built: BUILT.filter((f) => f !== missing) })
-      expect(status).not.toBe(0)
-      expect(out).toContain('::error::')
-      expect(touched(calls)).toEqual([])
-    })
+    describe('publish', () => {
+      const script = publish.steps.at(-1)?.run ?? ''
+      const assets = [...MAC, ...LINUX]
 
-    it('stays a draft when the tag moved off the commit this run checked', () => {
-      const { status, calls } = run({ env: { STUB_TAG_SHA: 'b'.repeat(40) } })
-      expect(status).not.toBe(0)
-      expect(calls).toHaveLength(1)
-    })
+      it('checks the tag, the draft and the assets, and un-drafts last', () => {
+        const { status, calls, out } = run(script, { assets })
+        expect(out).not.toContain('::error::')
+        expect(status).toBe(0)
+        expect(calls).toEqual([
+          'api repos/PiperGuy/drift/commits/tags/v0.2.2 --jq .sha',
+          expect.stringContaining('--json isDraft'),
+          expect.stringContaining('--json assets'),
+          'release edit v0.2.2 --draft=false'
+        ])
+      })
 
-    it('stays a draft when an upload was silently skipped', () => {
-      const { status, calls, out } = run({ env: { STUB_DROP: '.deb' } })
-      expect(status).not.toBe(0)
-      expect(out).toContain('drift_0.2.2_amd64.deb is missing or incomplete')
-      expect(touched(calls).map((c) => c.split(' ')[1])).toEqual(['upload'])
-    })
+      it.each(['.dmg', '.zip', 'latest-mac.yml', '.AppImage', '.deb', 'latest-linux.yml'])(
+        'stays a draft when the release has no %s',
+        (ext) => {
+          const { status, calls, out } = run(script, {
+            assets: assets.filter((f) => !f.endsWith(ext))
+          })
+          expect(status).not.toBe(0)
+          expect(out).toContain('::error::release v0.2.2 has no uploaded ')
+          expect(wrote(calls)).toEqual([])
+        }
+      )
 
-    it('refuses to replace the assets of an already published release', () => {
-      const { status, calls } = run({ env: { STUB_IS_DRAFT: 'false' } })
-      expect(status).not.toBe(0)
-      expect(touched(calls)).toEqual([])
-    })
+      it('stays a draft when the tag moved off the commit this run checked', () => {
+        const { status, calls } = run(script, { assets, env: { STUB_TAG_SHA: 'b'.repeat(40) } })
+        expect(status).not.toBe(0)
+        expect(calls).toHaveLength(1)
+      })
 
-    it('creates the draft itself for a manually pushed tag, then the same sequence', () => {
-      const { status, calls } = run({ env: { STUB_EXISTS: '0' } })
-      expect(status).toBe(0)
-      expect(touched(calls).map((c) => c.split(' ').slice(1).join(' '))).toEqual([
-        'create v0.2.2 --draft --verify-tag --generate-notes',
-        expect.stringMatching(/^upload v0\.2\.2 /),
-        'edit v0.2.2 --draft=false'
-      ])
+      it.each(['false', 'missing'])('does nothing when the draft is %s', (state) => {
+        const { status, calls } = run(script, { assets, env: { STUB_IS_DRAFT: state } })
+        expect(status).not.toBe(0)
+        expect(wrote(calls)).toEqual([])
+      })
     })
   })
 })
@@ -373,7 +444,6 @@ describe('every workflow', () => {
         'actions/checkout': 'v4',
         'actions/setup-node': 'v4',
         'actions/upload-artifact': 'v4',
-        'actions/download-artifact': 'v4',
         'actions/cache': 'v4',
         'googleapis/release-please-action': 'v4'
       }
