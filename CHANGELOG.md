@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/PiperGuy/drift/compare/v0.2.1...v0.2.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **release:** publish installers only after verified builds ([193ae9a](https://github.com/PiperGuy/drift/commit/193ae9ac50a961d31fe49bc3a16f6ca43958845a))
+
 ## [0.2.1](https://github.com/PiperGuy/drift/compare/v0.2.0...v0.2.1) (2026-09-07)
 
 
