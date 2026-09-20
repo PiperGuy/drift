@@ -53,9 +53,17 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run check
-      - run: npm run ${{ matrix.script }} -- --publish never
+      - name: Package (never publishes)
+        run: |
+          # Signing is optional, but an unset secret arrives as an empty string and
+          # electron-builder resolves an empty CSC_LINK as a path ("<cwd> not a file").
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          npm run "$SCRIPT" -- --publish never
         env:
-          # Signing is optional: unset secrets yield unsigned builds, set ones sign + notarize.
+          SCRIPT: ${{ matrix.script }}
+          # Unset secrets yield unsigned builds, set ones sign + notarize.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}

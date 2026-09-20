@@ -149,10 +149,10 @@ describe('release.yml', () => {
     expect(build.steps.indexOf(upload as Step)).toBeGreaterThan(pack)
     // electron-builder's GitHub publisher skips silently in several cases
     // (electron-publish gitHubPublisher), so it never uploads.
-    expect(matrixRuns(wf).filter((r) => r.includes('--publish'))).toEqual([
-      'npm run build:linux -- --publish never',
-      'npm run build:mac -- --publish never'
-    ])
+    const publishing = runs(wf).flatMap((r) => r.split('\n').filter((l) => l.includes('--publish')))
+    expect(publishing.map((l) => l.trim())).toEqual(['npm run "$SCRIPT" -- --publish never'])
+    expect(build.steps[pack].env?.SCRIPT).toBe('${{ matrix.script }}')
+    expect(rows.map((r) => r.script).sort()).toEqual(['build:linux', 'build:mac'])
     for (const s of build.steps) {
       expect(s).not.toHaveProperty('continue-on-error')
       if (s !== upload) expect(s.env ?? {}).not.toHaveProperty('GH_TOKEN')
@@ -228,7 +228,11 @@ case "$1 $2" in
     done ;;
 esac
 `
-    /** Runs a workflow step's own script text against a stub `gh`; returns exit code and gh calls. */
+    // Records what electron-builder would see: a variable that is set, even to '', or not at all.
+    const NPM = `#!/usr/bin/env bash
+echo "npm $* CSC_LINK=\${CSC_LINK-<unset>} APPLE_ID=\${APPLE_ID-<unset>}" >> "$STUB_LOG"
+`
+    /** Runs a workflow step's own script text against stub `gh`/`npm`; returns exit code and their calls. */
     const run = (
       script: string,
       opts: { built?: string[]; assets?: string[]; env?: Record<string, string> } = {}
@@ -241,7 +245,8 @@ esac
       mkdirSync(join(dir, 'bin'))
       for (const f of opts.built ?? []) writeFileSync(join(dir, 'dist', f), `bytes of ${f}`)
       writeFileSync(join(dir, 'bin', 'gh'), GH)
-      chmodSync(join(dir, 'bin', 'gh'), 0o755)
+      writeFileSync(join(dir, 'bin', 'npm'), NPM)
+      for (const bin of ['gh', 'npm']) chmodSync(join(dir, 'bin', bin), 0o755)
       writeFileSync(
         join(dir, 'assets'),
         (opts.assets ?? []).map((f) => `${f} ${size(f)}\n`).join('')
@@ -277,6 +282,24 @@ esac
       calls
         .filter((c) => /^release (upload|edit|create|delete)/.test(c))
         .map((c) => c.split(' ')[1])
+
+    it('packages unsigned when the signing secrets are unset, signed when they are set', () => {
+      // v0.2.0/v0.2.1 never got this far. An unset secret is exported as '', and
+      // electron-builder reads an empty CSC_LINK as a path: "<cwd> not a file".
+      const script = build.steps.find((s) => s.run?.includes('--publish never'))?.run ?? ''
+      const secrets = { CSC_KEY_PASSWORD: '', APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '' }
+      const unset = run(script, {
+        env: { SCRIPT: 'build:mac', CSC_LINK: '', APPLE_ID: '', ...secrets }
+      })
+      expect(unset.status).toBe(0)
+      expect(unset.calls).toEqual([
+        'npm run build:mac -- --publish never CSC_LINK=<unset> APPLE_ID=<unset>'
+      ])
+      const set = run(script, {
+        env: { SCRIPT: 'build:mac', CSC_LINK: 'cert', APPLE_ID: 'id', ...secrets }
+      })
+      expect(set.calls).toEqual(['npm run build:mac -- --publish never CSC_LINK=cert APPLE_ID=id'])
+    })
 
     describe.each(rows)('build upload ($script)', (row) => {
       const built = row.script === 'build:mac' ? MAC : LINUX
