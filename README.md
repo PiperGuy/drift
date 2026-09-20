@@ -185,13 +185,35 @@ remains intentionally unavailable** — no release builds or ships it.
 reads the conventional commits that landed on main and keeps a single **release PR**
 open (updating it as more merges arrive) with the next SemVer version written into
 `package.json` and `package-lock.json`, and the notes prepended to `CHANGELOG.md`.
-**Merging that release PR is the release**: Release Please creates the `vX.Y.Z` tag
-and the GitHub release with the changelog as its notes, then dispatches
-`.github/workflows/release.yml` at that tag (a tag created with the workflow token
-cannot fire `on: push: tags` itself, so the dispatch is explicit). `release.yml`
-runs `npm run check`, builds macOS and Linux only, and attaches `.dmg`, `.zip`,
-`.AppImage` and `.deb` to that same release — one release, with the version bump
-committed before anything builds, so installers embed the version they claim.
+**Merging that release PR is the release**, in this order:
+
+1. `release-please.yml` creates the `vX.Y.Z` tag on the release PR's merge commit and
+   a **draft** GitHub release with the changelog as its notes (`draft` and
+   `force-tag-creation` in `release-please-config.json`; a draft has no git tag of its
+   own until it is published, and both Release Please and step 2 need one). A draft is
+   invisible to the public and to the in-app updater.
+2. It dispatches `release.yml` at that tag. A tag created with the workflow token
+   cannot fire `on: push: tags` itself, so the dispatch is explicit, and at the tag ref
+   the run is pinned to the tagged commit no matter what has landed on main since.
+3. `release.yml` `build` runs `npm run check` on that commit, then packages macOS and
+   Linux only. electron-builder never uploads (`--publish never`; its GitHub publisher
+   skips silently in several cases). Each platform then requires its own files
+   (`.dmg`, `.zip`, blockmaps and `latest-mac.yml`; `.AppImage`, `.deb` and
+   `latest-linux.yml`), uploads them to the draft with `gh`, and reads every asset's
+   name and size back from the release. Nothing travels through Actions artifacts, so a
+   release does not depend on the artifact storage quota.
+4. `release.yml` `publish` runs only if both builds succeeded. It confirms the tag
+   still names the commit that was checked and that the draft holds a `.dmg`, `.zip`,
+   `.AppImage`, `.deb` and both `latest-*.yml` updater manifests, and only then
+   publishes it.
+
+Nothing else in the repository makes a release public, so there is no public release
+without installers and none for a commit that failed the gate. If any step fails the
+draft simply stays a draft: re-run the failed `Release` run if the cause was transient
+(uploads replace what is there), otherwise leave it unpublished and ship the fix as the
+next version. The version bump is committed before anything builds, so installers embed
+the version they claim.
+
 Signing works as before: unsigned until `CSC_LINK` + `CSC_KEY_PASSWORD` (macOS
 Developer ID .p12, base64) and `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` +
 `APPLE_TEAM_ID` (notarization) exist as repository secrets, after which the same
@@ -215,12 +237,14 @@ even below 1.0, so mark a commit breaking only when you mean the major bump.
 reviewed PR, set the same version in `package.json`, `package-lock.json` **and**
 `.release-please-manifest.json` (they must stay equal — `tests/versioning.test.ts`
 enforces it, and a drifted manifest would make Release Please re-release the wrong
-version). Merge it, then run `git tag vX.Y.Z && git push origin vX.Y.Z` — a tag
-pushed with your own credentials triggers `release.yml` directly, and
-electron-builder creates the GitHub release itself. There is deliberately no npm
-script that versions or pushes tags from a laptop.
-`Actions → Release → Run workflow` on a branch still builds without publishing;
-installers are attached to the run as artifacts.
+version). Merge it, then create the draft and push the tag, in that order:
+`gh release create vX.Y.Z --draft --generate-notes --target main` and
+`git tag vX.Y.Z && git push origin vX.Y.Z`. A tag pushed with your own credentials
+triggers `release.yml` directly, which fills and publishes that draft exactly as above
+(without a draft the builds fail rather than publish anything). There is deliberately
+no npm script that versions or pushes tags from a laptop.
+`Actions → Release → Run workflow` on a branch still builds without publishing: the
+same required-installer check runs, but it stores no Actions artifacts.
 
 ## Sources and the sidebar
 

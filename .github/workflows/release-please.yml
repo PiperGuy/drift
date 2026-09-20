@@ -1,8 +1,17 @@
 name: Release Please
 # Conventional commits merged to main drive versioning. release-please keeps a
 # release PR open with the next SemVer version (package.json, package-lock.json)
-# and CHANGELOG.md. Merging that PR makes it create the vX.Y.Z tag and the
-# GitHub release. It builds and publishes nothing itself.
+# and CHANGELOG.md. Merging that PR makes it create the vX.Y.Z tag and a DRAFT
+# GitHub release (`draft` + `force-tag-creation` in release-please-config.json).
+# It builds nothing and makes nothing public: release.yml publishes the draft,
+# and only after that tag's commit passed the quality gate and both platform
+# builds uploaded their installers (v0.2.0 and v0.2.1 were published here first
+# and stayed empty when release.yml's gate failed).
+#
+# Deliberately no quality gate in this file. release-please tags the release
+# PR's merge commit, whichever push's run gets to it first, so a check of
+# `github.sha` here cannot vouch for the commit that ends up tagged. The gate
+# that counts runs in release.yml, on the tagged commit itself.
 on:
   push:
     branches: [main]
@@ -10,7 +19,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # release branch, tag and GitHub release
+      contents: write # release branch, tag and draft GitHub release
       issues: write # release-please manages its labels through the issues API
       pull-requests: write # open/update the release PR
     outputs:
@@ -23,8 +32,7 @@ jobs:
     # The tag above is created with GITHUB_TOKEN, and GITHUB_TOKEN events never
     # start other workflows, so release.yml's `on: push: tags` will not fire.
     # workflow_dispatch is the documented exception: dispatching release.yml at
-    # the tag ref gives it the exact same GITHUB_REF as a tag push, and its
-    # builds upload into the release created above.
+    # the tag ref gives it the exact same GITHUB_REF and GITHUB_SHA as a tag push.
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest

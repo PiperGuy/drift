@@ -1,17 +1,29 @@
 name: Release
-# Builds macOS and Linux installers for a vX.Y.Z tag and uploads them to the
-# GitHub Release with that tag. Normally started by release-please.yml, which
-# dispatches this workflow at the tag it just created (its release already
-# exists and the assets are attached to it). A manually pushed v* tag works
-# too; then electron-builder creates the release itself. Windows is
-# deliberately not built. workflow_dispatch from a branch builds without
-# publishing; installers land as run artifacts.
+# Builds macOS and Linux installers for a vX.Y.Z tag and publishes the GitHub
+# release for it. Normally started by release-please.yml, which left a DRAFT
+# release for the tag and dispatches this workflow at it. Order is the contract:
+#   1. build (both platforms): `npm run check` on the tag's commit, package, then
+#      require every installer, upload it to the draft and read it back.
+#      electron-builder never uploads (`--publish never`): its publisher skips
+#      silently in several cases. Nothing travels through Actions artifacts,
+#      whose storage quota main-artifacts.yml can exhaust.
+#   2. publish, only if every build leg succeeded: the tag still names the commit
+#      that was checked, every required asset is on the draft, then make it public.
+# A failure anywhere leaves a draft nobody sees, never an empty public release.
+# Without a draft for the tag the builds fail: for a manually pushed v* tag,
+# create the draft first (README, "Emergency manual release"). Windows is
+# deliberately not built. workflow_dispatch from a branch builds and checks the
+# installers without publishing. It deliberately stores no Actions artifacts:
+# required-file checks above are the branch-run evidence, and artifact quota
+# exhaustion must never make a packaging verification fail.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
 jobs:
   build:
     strategy:
@@ -20,11 +32,17 @@ jobs:
         include:
           - os: ubuntu-latest
             script: build:linux
+            files: dist/*.AppImage dist/*.deb dist/latest-linux.yml
           - os: macos-latest
             script: build:mac
+            files: dist/*.dmg dist/*.zip dist/*.blockmap dist/latest-mac.yml
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # release assets; the token reaches the upload step only
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # npm and electron-builder get no write token
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -37,25 +55,87 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run check
-      - run: npm run ${{ matrix.script }} -- --publish onTagOrDraft
+      - name: Package (never publishes)
+        run: |
+          # Signing is optional, but an unset secret arrives as an empty string and
+          # electron-builder resolves an empty CSC_LINK as a path ("<cwd> not a file").
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          npm run "$SCRIPT" -- --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Without this, a build re-run >2h after release-please published the
-          # release would silently skip the upload (electron-publish 2h window).
-          EP_GH_IGNORE_TIME: 'true'
-          # Signing is optional: unset secrets yield unsigned builds, set ones sign + notarize.
+          SCRIPT: ${{ matrix.script }}
+          # Unset secrets yield unsigned builds, set ones sign + notarize.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: drift-${{ matrix.os }}
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.dmg
-            dist/*.zip
-          if-no-files-found: error
-          retention-days: 30
+      # tests/workflows.test.ts runs this script and publish's against a stub `gh`.
+      - name: Require the installers, upload them to the draft release
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # An unmatched glob stays literal and fails here, never skipped.
+          # shellcheck disable=SC2206
+          built=($FILES)
+          for f in "${built[@]}"; do
+            [ -s "$f" ] || fail "the build produced no $f"
+          done
+          ls -l "${built[@]}"
+          [ "$GITHUB_REF_TYPE" = tag ] || exit 0 # branch run: nothing to release
+
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] ||
+            fail "no draft release for $TAG (none exists, or it is already published)"
+          gh release upload "$TAG" "${built[@]}" --clobber
+
+          # Believe the release, not the upload's exit code: every file, complete.
+          remote=$(gh release view "$TAG" --json assets \
+            --jq '.assets[] | select(.state == "uploaded") | "\(.name) \(.size)"')
+          for f in "${built[@]}"; do
+            grep -qxF "$(basename "$f") $(($(wc -c <"$f")))" <<<"$remote" ||
+              fail "$(basename "$f") is missing or incomplete on the release"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          FILES: ${{ matrix.files }}
+  publish:
+    # No status function in `if`, so success() is implied: every build leg green.
+    needs: build
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the draft release
+    steps:
+      - run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Every build leg checked and built GITHUB_SHA. The release must be
+          # for that commit, so the tag has to still name it.
+          [ "$(gh api "repos/$GH_REPO/commits/tags/$TAG" --jq .sha)" = "$GITHUB_SHA" ] ||
+            fail "$TAG no longer points at $GITHUB_SHA"
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] ||
+            fail "$TAG is not a draft release; nothing to publish"
+
+          assets=$(gh release view "$TAG" --json assets \
+            --jq '.assets[] | select(.state == "uploaded" and .size > 0) | .name')
+          has() {
+            while read -r name; do
+              # shellcheck disable=SC2254
+              case $name in $1) return 0 ;; esac
+            done <<<"$assets"
+            return 1
+          }
+          for pattern in '*.dmg' '*.zip' latest-mac.yml '*.AppImage' '*.deb' latest-linux.yml; do
+            has "$pattern" || fail "release $TAG has no uploaded $pattern"
+          done
+
+          gh release edit "$TAG" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
