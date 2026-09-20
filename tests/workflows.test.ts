@@ -1,4 +1,13 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
@@ -7,7 +16,9 @@ import { parse } from 'yaml'
  * Guard the delivery intent of the GitHub workflows without snapshotting their
  * text: CI runs the full quality gate plus desktop E2E; a merge to main ships
  * exactly macOS (.dmg/.zip) and Linux (.AppImage/.deb) installers as Actions
- * artifacts; and nothing in the automated pipeline builds or ships Windows.
+ * artifacts; a release stays a draft until its tag's commit passed the gate and
+ * every installer is on it; and nothing in the automated pipeline builds or ships
+ * Windows.
  */
 
 const DIR = join(__dirname, '..', '.github', 'workflows')
@@ -114,22 +125,171 @@ describe('main-artifacts.yml', () => {
 
 describe('release.yml', () => {
   const wf = load('release.yml')
+  const { build, publish } = wf.jobs
 
   it('builds tags for exactly macOS and Linux', () => {
     const rows = jobs(wf).flatMap((j) => j.strategy?.matrix?.include ?? [])
     expect(rows.map((r) => r.os).sort()).toEqual(['macos-latest', 'ubuntu-latest'])
   })
 
-  it('uploads into the published release that release-please created, re-runs included', () => {
-    // A `releaseType: draft` publisher refuses an existing published release,
-    // and without EP_GH_IGNORE_TIME a re-run >2h after publishing silently
-    // skips the upload (electron-publish gitHubPublisher.getOrCreateRelease).
-    const eb = parse(readFileSync(join(__dirname, '..', 'electron-builder.yml'), 'utf8')) as {
-      publish: { provider: string; releaseType: string }
+  it('gates and packages the tagged commit itself, with no way to publish from a build', () => {
+    // Read-only token; electron-builder's GitHub publisher skips silently in
+    // several cases (electron-publish gitHubPublisher), so it never uploads.
+    expect(wf.permissions).toEqual({ contents: 'read' })
+    expect(build.permissions).toBeUndefined()
+    // No `ref` override: the run is pinned to the commit the tag named at dispatch.
+    expect(build.steps.find((s) => s.uses?.startsWith('actions/checkout'))?.with).toBeUndefined()
+    const order = build.steps.map((s) => s.run ?? '')
+    const gate = order.indexOf('npm run check')
+    expect(order.indexOf('npm ci')).toBeGreaterThanOrEqual(0)
+    expect(gate).toBeGreaterThan(order.indexOf('npm ci'))
+    expect(order.findIndex((r) => r.includes('--publish never'))).toBeGreaterThan(gate)
+    expect(matrixRuns(wf).filter((r) => r.includes('--publish'))).toEqual([
+      'npm run build:linux -- --publish never',
+      'npm run build:mac -- --publish never'
+    ])
+    for (const s of build.steps) {
+      expect(s.if).toBeUndefined()
+      expect(s).not.toHaveProperty('continue-on-error')
+      expect(s.env ?? {}).not.toHaveProperty('GH_TOKEN')
     }
-    expect(eb.publish.releaseType).toBe('release')
-    const publish = steps(wf).find((s) => s.run?.includes('--publish onTagOrDraft'))
-    expect(publish?.env?.EP_GH_IGNORE_TIME).toBe('true')
+    for (const up of uploads(wf)) expect(up.with?.['if-no-files-found']).toBe('error')
+  })
+
+  it('publishes only from a tag, only after every build leg succeeded', () => {
+    expect(publish.needs).toBe('build')
+    // A status function (always(), failure(), !cancelled()) would drop the implied success().
+    expect(publish.if).toBe("${{ github.ref_type == 'tag' }}")
+    expect(publish).not.toHaveProperty('continue-on-error')
+    expect(publish.permissions).toEqual({ contents: 'write' })
+    for (const s of publish.steps) {
+      expect(s.if).toBeUndefined()
+      expect(s).not.toHaveProperty('continue-on-error')
+    }
+    // The only place any workflow makes a release public.
+    const all = readdirSync(DIR).flatMap((f) => runs(load(f)))
+    expect(all.filter((r) => /draft=false|gh release (create|edit)/.test(r))).toEqual([
+      publish.steps.at(-1)?.run
+    ])
+  })
+
+  describe('publish script', () => {
+    const SHA = 'a'.repeat(40)
+    const BUILT = [
+      'drift-0.2.2.dmg',
+      'Drift-0.2.2-arm64-mac.zip',
+      'latest-mac.yml',
+      'drift-0.2.2.AppImage',
+      'drift_0.2.2_amd64.deb',
+      'latest-linux.yml'
+    ]
+    const GH = `#!/usr/bin/env bash
+echo "$*" >> "$STUB_LOG"
+case "$1 $2" in
+  'api '*) echo "$STUB_TAG_SHA" ;;
+  'release view')
+    case "$*" in
+      *isDraft*) echo "$STUB_IS_DRAFT" ;;
+      *assets*) cat "$STUB_ASSETS" ;;
+      *) [ "$STUB_EXISTS" = 1 ] ;;
+    esac ;;
+  'release upload')
+    shift 3
+    for f in "$@"; do
+      [ "$f" = --clobber ] && continue
+      # What a best-effort uploader does: skip one and still exit 0.
+      [ -n "$STUB_DROP" ] && [[ $f == *"$STUB_DROP" ]] && continue
+      echo "$(basename "$f") $(($(wc -c <"$f")))" >> "$STUB_ASSETS"
+    done ;;
+esac
+`
+    /** Runs the workflow's own script text against a stub `gh`; returns exit code and gh calls. */
+    const run = (
+      opts: { built?: string[]; env?: Record<string, string> } = {}
+    ): { status: number | null; calls: string[]; out: string } => {
+      const script = publish.steps.at(-1)?.run ?? ''
+      // Inputs arrive through `env:` only, so this is the exact text Actions runs.
+      expect(script).not.toContain('${{')
+      const dir = mkdtempSync(join(tmpdir(), 'drift-publish-'))
+      mkdirSync(join(dir, 'dist'))
+      mkdirSync(join(dir, 'bin'))
+      for (const f of opts.built ?? BUILT) writeFileSync(join(dir, 'dist', f), `bytes of ${f}`)
+      writeFileSync(join(dir, 'bin', 'gh'), GH)
+      chmodSync(join(dir, 'bin', 'gh'), 0o755)
+      writeFileSync(join(dir, 'assets'), '')
+      const res = spawnSync('bash', ['-c', script], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: {
+          PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+          TAG: 'v0.2.2',
+          GH_REPO: 'PiperGuy/drift',
+          GITHUB_SHA: SHA,
+          STUB_LOG: join(dir, 'log'),
+          STUB_ASSETS: join(dir, 'assets'),
+          STUB_TAG_SHA: SHA,
+          STUB_EXISTS: '1',
+          STUB_IS_DRAFT: 'true',
+          STUB_DROP: '',
+          ...opts.env
+        }
+      })
+      const calls = readFileSync(join(dir, 'log'), 'utf8').trim().split('\n')
+      return { status: res.status, calls, out: res.stdout + res.stderr }
+    }
+    const touched = (calls: string[]): string[] =>
+      calls.filter((c) => /^release (upload|edit|create)/.test(c))
+
+    it('checks the tag, uploads everything, reads it back, and publishes last', () => {
+      const { status, calls, out } = run()
+      expect(out).toBe('')
+      expect(status).toBe(0)
+      expect(calls[0]).toBe('api repos/PiperGuy/drift/commits/tags/v0.2.2 --jq .sha')
+      const upload = calls.findIndex((c) => c.startsWith('release upload v0.2.2 '))
+      const readBack = calls.findIndex((c) => c.includes('--json assets'))
+      expect(upload).toBeGreaterThan(0)
+      for (const f of BUILT) expect(calls[upload]).toContain(`dist/${f}`)
+      expect(readBack).toBeGreaterThan(upload)
+      expect(calls.indexOf('release edit v0.2.2 --draft=false')).toBe(calls.length - 1)
+      expect(calls.at(-1)).toBe('release edit v0.2.2 --draft=false')
+      expect(touched(calls)).toHaveLength(2)
+    })
+
+    it.each(BUILT)('publishes and uploads nothing when the builds produced no %s', (missing) => {
+      const { status, calls, out } = run({ built: BUILT.filter((f) => f !== missing) })
+      expect(status).not.toBe(0)
+      expect(out).toContain('::error::')
+      expect(touched(calls)).toEqual([])
+    })
+
+    it('stays a draft when the tag moved off the commit this run checked', () => {
+      const { status, calls } = run({ env: { STUB_TAG_SHA: 'b'.repeat(40) } })
+      expect(status).not.toBe(0)
+      expect(calls).toHaveLength(1)
+    })
+
+    it('stays a draft when an upload was silently skipped', () => {
+      const { status, calls, out } = run({ env: { STUB_DROP: '.deb' } })
+      expect(status).not.toBe(0)
+      expect(out).toContain('drift_0.2.2_amd64.deb is missing or incomplete')
+      expect(touched(calls).map((c) => c.split(' ')[1])).toEqual(['upload'])
+    })
+
+    it('refuses to replace the assets of an already published release', () => {
+      const { status, calls } = run({ env: { STUB_IS_DRAFT: 'false' } })
+      expect(status).not.toBe(0)
+      expect(touched(calls)).toEqual([])
+    })
+
+    it('creates the draft itself for a manually pushed tag, then the same sequence', () => {
+      const { status, calls } = run({ env: { STUB_EXISTS: '0' } })
+      expect(status).toBe(0)
+      expect(touched(calls).map((c) => c.split(' ').slice(1).join(' '))).toEqual([
+        'create v0.2.2 --draft --verify-tag --generate-notes',
+        expect.stringMatching(/^upload v0\.2\.2 /),
+        'edit v0.2.2 --draft=false'
+      ])
+    })
   })
 })
 
@@ -160,22 +320,16 @@ describe('release-please.yml', () => {
     expect(perms).toContainEqual({ actions: 'write' })
   })
 
-  it('creates no tag or release until the merged commit passes the full quality gate', () => {
-    // release.yml runs `npm run check` at the tag; if that fails the release is
-    // already published and stays without installers (v0.2.0, v0.2.1).
-    const gate = wf.jobs.check
-    const all = gate.steps.map((s) => s.run ?? '').join('\n')
-    expect(all).toContain('npm ci')
-    expect(all).toContain('npm run check')
-    expect(gate.permissions).toEqual({ contents: 'read' })
-    expect(gate.if).toBeUndefined()
-    for (const s of gate.steps) expect(s).not.toHaveProperty('continue-on-error')
-    expect(wf.jobs['release-please'].needs).toBe('check')
-    // The action reads main's current head, so an older run must not release a
-    // newer, still unchecked commit on the strength of its own green check.
-    const release = steps(wf).find((s) => s.uses?.startsWith('googleapis/release-please-action'))
-    expect(release?.if).toContain('steps.head.outputs.sha == github.sha')
-    expect(wf.jobs.package.needs).toBe('release-please')
+  it('leaves a draft release and a real tag, and never makes anything public', () => {
+    // Published here, v0.2.0 and v0.2.1 went public before release.yml's gate
+    // failed and stayed empty. A draft has no git tag until it is published, and
+    // both release-please and the dispatch below need one: force-tag-creation.
+    const config = JSON.parse(
+      readFileSync(join(__dirname, '..', 'release-please-config.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(config.draft).toBe(true)
+    expect(config['force-tag-creation']).toBe(true)
+    expect(runs(wf).join('\n')).not.toMatch(/gh release|draft=false/)
   })
 
   it('hands the new tag to the existing release workflow, only once one exists', () => {
@@ -186,7 +340,9 @@ describe('release-please.yml', () => {
     )
     expect(job).toBeDefined()
     expect(job?.if).toContain('release_created')
-    expect(JSON.stringify(job)).toContain('tag_name')
+    // At the tag ref, so release.yml's GITHUB_SHA is the tagged commit, not main's head.
+    expect(job?.steps[0].run).toContain('--ref "$TAG"')
+    expect(job?.steps[0].env?.TAG).toBe('${{ needs.release-please.outputs.tag_name }}')
   })
 
   it('builds nothing and publishes nothing itself', () => {
@@ -217,6 +373,7 @@ describe('every workflow', () => {
         'actions/checkout': 'v4',
         'actions/setup-node': 'v4',
         'actions/upload-artifact': 'v4',
+        'actions/download-artifact': 'v4',
         'actions/cache': 'v4',
         'googleapis/release-please-action': 'v4'
       }

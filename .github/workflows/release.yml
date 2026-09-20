@@ -1,17 +1,24 @@
 name: Release
-# Builds macOS and Linux installers for a vX.Y.Z tag and uploads them to the
-# GitHub Release with that tag. Normally started by release-please.yml, which
-# dispatches this workflow at the tag it just created (its release already
-# exists and the assets are attached to it). A manually pushed v* tag works
-# too; then electron-builder creates the release itself. Windows is
-# deliberately not built. workflow_dispatch from a branch builds without
+# Builds macOS and Linux installers for a vX.Y.Z tag and publishes the GitHub
+# release for it. Normally started by release-please.yml, which left a DRAFT
+# release for the tag and dispatches this workflow at it. Order is the contract:
+#   1. build (both platforms): `npm run check` on the tag's commit, then package.
+#      electron-builder never uploads (`--publish never`); its publisher skips
+#      silently in several cases. Installers leave the job as run artifacts.
+#   2. publish, only if every build leg succeeded: require all installers,
+#      upload them to the draft, read them back, and only then make it public.
+# A failure anywhere leaves a draft nobody sees, never an empty public release.
+# A manually pushed v* tag works too (publish creates the draft itself). Windows
+# is deliberately not built. workflow_dispatch from a branch builds without
 # publishing; installers land as run artifacts.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
 jobs:
   build:
     strategy:
@@ -37,12 +44,8 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run check
-      - run: npm run ${{ matrix.script }} -- --publish onTagOrDraft
+      - run: npm run ${{ matrix.script }} -- --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Without this, a build re-run >2h after release-please published the
-          # release would silently skip the upload (electron-publish 2h window).
-          EP_GH_IGNORE_TIME: 'true'
           # Signing is optional: unset secrets yield unsigned builds, set ones sign + notarize.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -52,10 +55,61 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: drift-${{ matrix.os }}
+          # Installers plus what electron-updater reads from the release.
           path: |
             dist/*.AppImage
             dist/*.deb
             dist/*.dmg
             dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
           if-no-files-found: error
           retention-days: 30
+  publish:
+    # No status function in `if`, so success() is implied: every build leg green.
+    needs: build
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload assets and publish the draft release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drift-*
+          path: dist
+          merge-multiple: true
+      # tests/workflows.test.ts runs this script against a stub `gh`.
+      - run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Every job in this run checked and built GITHUB_SHA. The release must
+          # be for that commit, so the tag has to still name it.
+          [ "$(gh api "repos/$GH_REPO/commits/tags/$TAG" --jq .sha)" = "$GITHUB_SHA" ] ||
+            fail "$TAG no longer points at $GITHUB_SHA"
+
+          # release-please left a draft; a manually pushed tag has none yet.
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --draft --verify-tag --generate-notes
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] ||
+            fail "$TAG is already published; refusing to replace its assets"
+
+          for glob in '*.dmg' '*.zip' latest-mac.yml '*.AppImage' '*.deb' latest-linux.yml; do
+            compgen -G "dist/$glob" >/dev/null || fail "the builds produced no dist/$glob"
+          done
+
+          gh release upload "$TAG" dist/* --clobber
+
+          # Believe the release, not the upload's exit code: every file, complete.
+          remote=$(gh release view "$TAG" --json assets \
+            --jq '.assets[] | select(.state == "uploaded") | "\(.name) \(.size)"')
+          for f in dist/*; do
+            grep -qxF "$(basename "$f") $(($(wc -c <"$f")))" <<<"$remote" ||
+              fail "$(basename "$f") is missing or incomplete on the release"
+          done
+
+          gh release edit "$TAG" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}

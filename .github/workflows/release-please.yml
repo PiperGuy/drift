@@ -1,61 +1,38 @@
 name: Release Please
 # Conventional commits merged to main drive versioning. release-please keeps a
 # release PR open with the next SemVer version (package.json, package-lock.json)
-# and CHANGELOG.md. Merging that PR makes it create the vX.Y.Z tag and the
-# GitHub release. It builds and publishes nothing itself. The tag is only created
-# once that exact main commit (generated CHANGELOG.md and version bump included)
-# passes `npm run check`: release PRs are opened with GITHUB_TOKEN, so CI never
-# runs on them, and v0.2.0/v0.2.1 were tagged and published before release.yml's
-# own check failed, leaving both releases without installers.
+# and CHANGELOG.md. Merging that PR makes it create the vX.Y.Z tag and a DRAFT
+# GitHub release (`draft` + `force-tag-creation` in release-please-config.json).
+# It builds nothing and makes nothing public: release.yml publishes the draft,
+# and only after that tag's commit passed the quality gate and both platform
+# builds uploaded their installers (v0.2.0 and v0.2.1 were published here first
+# and stayed empty when release.yml's gate failed).
+#
+# Deliberately no quality gate in this file. release-please tags the release
+# PR's merge commit, whichever push's run gets to it first, so a check of
+# `github.sha` here cannot vouch for the commit that ends up tagged. The gate
+# that counts runs in release.yml, on the tagged commit itself.
 on:
   push:
     branches: [main]
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: npm
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/electron
-            ~/Library/Caches/electron
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-      - run: npm run check
   release-please:
-    # No tag and no GitHub release unless the gate release.yml re-runs is green.
-    needs: check
     runs-on: ubuntu-latest
     permissions:
-      contents: write # release branch, tag and GitHub release
+      contents: write # release branch, tag and draft GitHub release
       issues: write # release-please manages its labels through the issues API
       pull-requests: write # open/update the release PR
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # The action releases whatever main points at now, not the commit `check`
-      # just passed. If main moved on, stand down: the newer push has its own run.
-      - id: head
-        run: echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: googleapis/release-please-action@v4
         id: release
-        if: ${{ steps.head.outputs.sha == github.sha }}
   package:
     # The tag above is created with GITHUB_TOKEN, and GITHUB_TOKEN events never
     # start other workflows, so release.yml's `on: push: tags` will not fire.
     # workflow_dispatch is the documented exception: dispatching release.yml at
-    # the tag ref gives it the exact same GITHUB_REF as a tag push, and its
-    # builds upload into the release created above.
+    # the tag ref gives it the exact same GITHUB_REF and GITHUB_SHA as a tag push.
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
