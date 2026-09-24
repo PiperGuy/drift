@@ -414,7 +414,8 @@ export DRIFT_LICENSE_PRIVATE_KEY=…                      # keep this in a passw
 node scripts/license.mjs issue customer@example.com 365 # a key valid for 365 days; omit days for perpetual
 ```
 
-**Before the first public release, run `keygen` on your own machine and commit the new
-public key.** The pair in the repo today was generated during development. A local trial is
+**Rotating the pair** (`keygen`, then commit the public key) invalidates every key issued
+with the old one. The pair was last rotated after v0.2.2; keys issued before then, and the
+dev pair's keys, do not unlock later builds. A local trial is
 bypassable by anyone willing to delete app data; a licence server is the upgrade path if that
 matters.
