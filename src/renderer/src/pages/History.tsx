@@ -21,7 +21,9 @@ import { fmtAgo } from '@/lib/format'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
 
-const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string }> = {
+type KindAppearance = { icon: LucideIcon; label: string; tone: string }
+
+const KIND: Record<string, KindAppearance> = {
   grant: { icon: FolderOpen, label: 'Granted', tone: 'text-lemon-ink bg-lemon-soft' },
   revoke: { icon: FolderOpen, label: 'Removed', tone: 'text-muted-foreground bg-muted' },
   workspace: { icon: FolderOpen, label: 'Workspace', tone: 'text-muted-foreground bg-muted' },
@@ -37,6 +39,12 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   rollback: { icon: Undo2, label: 'Rolled back', tone: 'text-warn bg-warn-soft' },
   format: { icon: Sparkles, label: 'Formatted', tone: 'text-lemon-ink bg-lemon-soft' },
   edit: { icon: PenLine, label: 'Edited', tone: 'text-lemon-ink bg-lemon-soft' }
+} satisfies Record<HistoryKind, KindAppearance>
+
+const LEGACY_KIND = {
+  icon: KeyRound,
+  label: 'Legacy record',
+  tone: 'text-muted-foreground bg-muted'
 }
 
 const base = (p: unknown): string =>
@@ -85,6 +93,10 @@ function describe(e: HistoryEvent): string {
     }
     case 'connection':
       return `${e.subject['action'] ?? ''} ${base(e.subject['root'])}`
+    case 'license':
+      return 'Recorded before this version.'
+    default:
+      return 'Recorded by an earlier version.'
   }
 }
 
@@ -220,7 +232,7 @@ export function HistoryPage(): React.JSX.Element {
       ) : tab === 'events' ? (
         <ol className="stagger min-h-0 flex-1 overflow-auto" aria-label="Events">
           {events?.map((e, i) => {
-            const k = KIND[e.kind]
+            const k = KIND[e.kind] ?? LEGACY_KIND
             return (
               <li
                 key={e.id}

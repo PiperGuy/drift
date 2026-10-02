@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { openStore } from './store'
 import type { DriftReceipt } from '@shared/drift'
 
@@ -45,6 +46,29 @@ test('store: migrates, remembers the root, logs redacted events, survives reopen
     assert.deepEqual(s.listRoots(), [])
     assert.equal(s.listEvents().length, 0)
     assert.equal(s.getMeta('fingerprint_key_ref'), 'sealed')
+    s.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('store: preserves legacy license history events', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plumbr-store-legacy-'))
+  const file = join(dir, 'plumbr.db')
+  try {
+    // Simulate an event written by an older release, before licensing was removed.
+    openStore(file).close()
+    const db = new DatabaseSync(file)
+    db.prepare('INSERT INTO events (at, kind, subject_json, detail_json) VALUES (?, ?, ?, ?)').run(
+      1,
+      'license',
+      JSON.stringify({ name: 'Prior user' }),
+      '{}'
+    )
+    db.close()
+
+    const s = openStore(file)
+    assert.equal(s.listEvents()[0].kind, 'license')
     s.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

@@ -10,6 +10,7 @@ import { WorkspacePage } from './Workspace'
 import { ProjectList } from '@/components/app/ProjectList'
 import { createRef } from 'react'
 import { ReceiptPage } from './Receipt'
+import { HistoryPage } from './History'
 import { NO_PROJECT, fromOption, toOption } from '@/lib/projects'
 
 const file = (rel: string, project: string | null): EnvFileInfo => ({
@@ -235,6 +236,18 @@ test('startup loads the workspace without a license or trial check', async () =>
   assert.equal(useWorkspace.getState().onboarded, true)
   assert.equal((plumbr.getSettings as ReturnType<typeof vi.fn>).mock.calls.length, 1)
   assert.equal((plumbr.recentWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length, 1)
+})
+
+test('history renders legacy license events without restoring license UI', async () => {
+  ;(plumbr.listHistory as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+    { id: 1, at: Date.now(), kind: 'license', subject: { name: 'Prior user' }, detail: {} }
+  ])
+
+  render(<HistoryPage />)
+
+  assert.ok(await screen.findByText('Legacy record'))
+  assert.ok(screen.getByText('Recorded before this version.'))
+  assert.equal(screen.queryByText(/Licensed|Key activated/), null)
 })
 
 function assertNoFingerprints(): void {

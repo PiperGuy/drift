@@ -262,7 +262,7 @@ export function openStore(file: string): {
       (q.listEvents.all(limit) as Record<string, unknown>[]).map((row) => ({
         id: Number(row['id']),
         at: Number(row['at']),
-        kind: row['kind'] as HistoryKind,
+        kind: String(row['kind']),
         subject: JSON.parse(row['subject_json'] as string),
         detail: JSON.parse(row['detail_json'] as string)
       })),

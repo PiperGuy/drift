@@ -137,7 +137,12 @@ export type HistoryKind =
 export type HistoryEvent = {
   id: number
   at: number
-  kind: HistoryKind
+  /**
+   * Event kinds are persisted in an append-only SQLite table. Keep this broad so
+   * newer builds can still display rows written by removed or future features.
+   * `HistoryKind` remains the restricted set accepted by logEvent for new rows.
+   */
+  kind: string
   subject: Record<string, unknown>
   detail: Record<string, unknown>
 }
