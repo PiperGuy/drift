@@ -8,7 +8,6 @@ import { envKind } from '@shared/env-file'
 import { planSync } from '@shared/drift'
 import type { EnvFileInfo } from '@shared/channels'
 import type { Store } from './store'
-import { assertUnlocked } from './license'
 import { compareProjects, ensureSourceRoot, toRoot } from './compare'
 import { ProjectCompareRequestSchema } from '@shared/ipc'
 import { isGranted, scanWorkspace } from './workspace'
@@ -50,11 +49,10 @@ const READ_TIMEOUT = 10_000
 type Method = (store: Store, params: unknown, opts: BridgeOptions) => Promise<unknown>
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** Same gate as every data IPC, plus the MCP switch in Settings. */
+/** The MCP switch is enforced for every bridge request. */
 function gate(store: Store): void {
   if (store.getMeta('mcp_enabled') === '0')
     throw new Error(`MCP is turned off in ${PRODUCT} settings.`)
-  assertUnlocked(store)
 }
 
 /**

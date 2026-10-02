@@ -3,7 +3,6 @@ import { ArrowRightLeft, FolderSearch, PanelLeft, Search, Settings } from 'lucid
 import { toast } from 'sonner'
 import { Logo } from '@/components/app/Logo'
 import { StatusBar } from '@/components/app/StatusBar'
-import { Lock } from '@/components/app/Lock'
 import { WorkspaceSwitcher } from '@/components/app/WorkspaceSwitcher'
 import { ProjectList } from '@/components/app/ProjectList'
 import { WorkspacePage } from '@/pages/Workspace'
@@ -54,7 +53,6 @@ export default function App(): React.JSX.Element {
   const setPage = useWorkspace((s) => s.setPage)
   const receipt = useWorkspace((s) => s.receipt)
   const paired = useWorkspace((s) => Boolean(s.left && s.right))
-  const license = useWorkspace((s) => s.license)
   const onboarded = useWorkspace((s) => s.onboarded)
   const collapsed = useWorkspace((s) => s.sidebarCollapsed)
   const toggleSidebar = useWorkspace((s) => s.toggleSidebar)
@@ -116,8 +114,6 @@ export default function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setPage, toggleSidebar, page])
 
-  // Trial over: the whole window is the lock screen. Main refuses data IPCs too.
-  if (license?.state === 'expired') return <Lock reason={license.reason} />
   // First run: the journey owns the whole window until finished or skipped.
   if (onboarded === false) return <OnboardingPage />
 

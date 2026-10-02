@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- remove license activation and trial gates; all Drift features are available without a key
+
 ## [0.2.2](https://github.com/PiperGuy/drift/compare/v0.2.1...v0.2.2) (2026-09-20)
 
 

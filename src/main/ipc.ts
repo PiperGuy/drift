@@ -4,7 +4,6 @@ import { copyFileSync } from 'node:fs'
 import {
   Channels,
   CompareRequest,
-  LicenseKey,
   McpClientIdSchema,
   ScanRequest,
   SettingsPatch,
@@ -33,7 +32,6 @@ import { compareGuarded, envShape, fingerprintKeyPersisted, loadFingerprintKey }
 import { compareProjects, ensureSourceRoot, toRoot } from './compare'
 import { startBridge } from './bridge'
 import { openStore } from './store'
-import { activate, assertUnlocked, currentLicense } from './license'
 import { install, statusAll, uninstall } from './mcp-clients'
 import { osAuth } from './auth'
 import { revealAllValues, revealValue } from './env'
@@ -163,13 +161,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return settings()
   })
 
-  ipcMain.handle(Channels.licenseGet, () => currentLicense(store))
-  ipcMain.handle(Channels.licenseActivate, (_e, raw: unknown) => {
-    const state = activate(store, LicenseKey.parse(raw))
-    store.logEvent('license', { name: state.state === 'licensed' ? state.name : '' })
-    return state
-  })
-
   ipcMain.handle(Channels.updateCheck, async (): Promise<UpdateResult> => {
     if (!app.isPackaged)
       return { status: 'error', message: 'Updates only work in a packaged build.' }
@@ -186,7 +177,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle(Channels.mcpClients, () => statusAll())
   ipcMain.handle(Channels.mcpInstall, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const id = McpClientIdSchema.parse(raw)
     await install(id, launch, skillDir)
     store.logEvent('mcp_install', { client: id })
@@ -200,7 +190,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspacePick, async () => {
-    assertUnlocked(store)
     const win = getWindow()
     const opts: Electron.OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],
@@ -218,7 +207,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(Channels.sshHosts, () => sshConfigHosts())
 
   ipcMain.handle(Channels.workspaceAddSsh, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { host, path } = SshRootRequest.parse(raw)
     await checkRemoteRoot(host, path)
     const root = sshRef(host, path.replace(/\/+$/, '') || '/')
@@ -229,7 +217,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspaceRemove, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const path = RootPath.parse(raw)
     revokeRoot(path)
     store.forgetRoot(path)
@@ -244,7 +231,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspaceAddDocker, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { host, container, path } = DockerSourceSpecSchema.parse(raw)
     await checkDockerRoot(host ?? null, container, path)
     const root = dockerRef(host ?? null, container, path.replace(/\/+$/, '') || '/')
@@ -258,12 +244,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   ipcMain.handle(Channels.awsProfiles, () => awsProfiles())
   ipcMain.handle(Channels.ecsDiscover, (_e, raw: unknown) => {
-    assertUnlocked(store)
     return discoverEcs(EcsDiscoverSchema.parse(raw))
   })
 
   ipcMain.handle(Channels.providerConnect, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const spec = ProviderConnectSpecSchema.parse(raw)
     const result = await connectProvider(store, spec)
     grantRoot(result.root.path)
@@ -278,7 +262,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.vaultConnect, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const spec = VaultSourceSpecSchema.parse(raw)
     const result = await connectVault(store, spec)
     grantRoot(result.root.path)
@@ -293,21 +276,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.vaultHistory, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const path = RootPath.parse(raw)
     assertGranted(path)
     return vaultHistory(store, path)
   })
 
   ipcMain.handle(Channels.vaultShapeAt, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path, version } = VaultShapeAtSchema.parse(raw)
     assertGranted(path)
     return vaultShapeAt(store, path, version)
   })
 
   ipcMain.handle(Channels.vaultRestore, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path, version, expectedVersion } = VaultRestoreSchema.parse(raw)
     assertGranted(path)
     const r = await vaultRestore(store, path, version, expectedVersion)
@@ -326,11 +306,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return roots.map((r) => toRoot(store, r.path, r.label))
   }
   ipcMain.handle(Channels.wsList, () => {
-    assertUnlocked(store)
     return { active: store.activeWorkspace(), all: store.listWorkspaces() }
   })
   ipcMain.handle(Channels.wsCreate, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const name = WorkspaceName.parse(raw)
     if (store.listWorkspaces().some((w) => w.name.toLowerCase() === name.toLowerCase()))
       throw new Error(`A workspace named ${name} already exists`)
@@ -339,7 +317,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return w
   })
   ipcMain.handle(Channels.wsRename, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { id, name } = WorkspaceRename.parse(raw)
     if (
       store.listWorkspaces().some((w) => w.id !== id && w.name.toLowerCase() === name.toLowerCase())
@@ -348,7 +325,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     store.renameWorkspace(id, name)
   })
   ipcMain.handle(Channels.wsDelete, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const id = WorkspaceId.parse(raw)
     const all = store.listWorkspaces()
     if (all.length <= 1) throw new Error('Keep at least one workspace')
@@ -361,7 +337,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     grantActive()
   })
   ipcMain.handle(Channels.wsSwitch, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const id = WorkspaceId.parse(raw)
     if (!store.listWorkspaces().some((w) => w.id === id)) throw new Error('Unknown workspace')
     store.setActiveWorkspace(id)
@@ -369,12 +344,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspaceRecent, () => {
-    assertUnlocked(store)
     return grantActive()
   })
   // Every remembered root of every source, for the cross-source picker. Metadata only; nothing is granted here.
   ipcMain.handle(Channels.rootsAll, (): SourceRoot[] => {
-    assertUnlocked(store)
     const names = new Map(store.listWorkspaces().map((w) => [w.id, w.name]))
     return store.listAllRoots().map((r) => ({
       ...toRoot(store, r.path, r.label),
@@ -383,23 +356,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }))
   })
   ipcMain.handle(Channels.projectCompare, (_e, raw: unknown) => {
-    assertUnlocked(store)
     return compareProjects(store, ProjectCompareRequestSchema.parse(raw))
   })
 
   ipcMain.handle(Channels.historyList, () => {
-    assertUnlocked(store)
     return store.listEvents()
   })
 
   ipcMain.handle(Channels.dataClear, () => {
-    assertUnlocked(store)
     store.clearCache()
     store.logEvent('clear', {})
   })
 
   ipcMain.handle(Channels.dataForget, () => {
-    assertUnlocked(store)
     revokeRoots()
     const dropped = store.forgetAll()
     dropVaultTokens(dropped)
@@ -408,7 +377,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.workspaceScan, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { root } = ScanRequest.parse(raw)
     // A remembered root of another source is granted for the session (cross-source picker).
     ensureSourceRoot(store, root)
@@ -419,13 +387,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.envShape, (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path } = ShapeRequest.parse(raw)
     return envShape(path)
   })
 
   ipcMain.handle(Channels.envCompare, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { left, right, ignore } = CompareRequest.parse(raw)
     assertGranted(left)
     assertGranted(right)
@@ -440,7 +406,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   let authed: Awaited<ReturnType<typeof osAuth>> | null = null
   ipcMain.handle(Channels.envReveal, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path, key } = RevealRequestSchema.parse(raw)
     // One OS prompt per app session: the first reveal authenticates, later ones reuse it.
     // Every reveal is still logged by key name.
@@ -451,7 +416,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(Channels.envApply, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const req = ApplyRequestSchema.parse(raw)
     const result = await applyPlan(store, req)
     store.logEvent(
@@ -467,39 +431,33 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return result
   })
   ipcMain.handle(Channels.envView, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path } = ViewRequestSchema.parse(raw)
     assertGranted(path)
     const text = await readText(path)
     return viewEnv(text, { example: envKind(baseRef(path)) === 'example' })
   })
   ipcMain.handle(Channels.envFormat, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path, expectedMtime } = FormatRequestSchema.parse(raw)
     const r = await formatFile(store, path, expectedMtime)
     if (r.changed) store.logEvent('format', { path, snapshot: r.snapshot }, { changed: r.changed })
     return r
   })
   ipcMain.handle(Channels.envSet, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const req = SetRequestSchema.parse(raw)
     const r = await setValues(store, req)
     store.logEvent('edit', { path: req.path, snapshot: r.snapshot }, { written: r.written })
     return r
   })
   ipcMain.handle(Channels.historySnapshots, () => {
-    assertUnlocked(store)
     return store.listSnapshots()
   })
   ipcMain.handle(Channels.historyRollback, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const id = SnapshotId.parse(raw)
     await rollback(store, id)
     store.logEvent('rollback', { snapshot: id, path: store.snapshotBlob(id)?.path })
   })
 
   ipcMain.handle(Channels.envRevealAll, async (_e, raw: unknown) => {
-    assertUnlocked(store)
     const { path } = ViewRequestSchema.parse(raw)
     const method = authed ?? (authed = await osAuth('reveal environment values', getWindow()))
     const values = await revealAllValues(path)

@@ -254,7 +254,7 @@ folder or server; **Add source…**, **Update source…** (rename, or point it e
 **Remove source** live in the switcher menu, and the header has an Update source button. Switching
 sources swaps what is scanned and compared; nothing on disk changes. In the file table, click a row
 to open it and right-click for Compare as A / B, Sync to another source, and Share (roadmap). Settings (gear, bottom-left) holds
-theme, licence, agents, the audit log with snapshots, and data.
+theme, agents, the audit log with snapshots, and data.
 
 ## Roots: several folders, and servers over SSH
 
@@ -398,24 +398,11 @@ Never a value, a fingerprint, a token or raw file text.
   holds. Plans are single use and expire after 15 minutes; the approval token is random, lives
   only in the app's memory for 5 minutes, is bound to the plan, its direction and the ordered key
   list, and is consumed before anything is read, so an agent (prompt-injected or not) can ask for
-  a dialog but cannot write without the human click. If the app is closed, locked or a source was
+  a dialog but cannot write without the human click. If the app is closed or a source was
   removed, those tools fail closed with a message that says to open the app.
 
-## Licensing and trial
+## No license activation or trial
 
-Every install gets a 7-day trial, tracked in the local store. After that the window locks and
-main refuses every data IPC (the MCP server and its bridge refuse tool calls too) until a key is entered in
-Settings → License. Keys are offline, Ed25519-signed, verified against the public key in
-`src/shared/license-pubkey.ts`. Nothing is sent anywhere.
-
-```bash
-node scripts/license.mjs keygen                         # once: writes the public key file, prints the private key
-export DRIFT_LICENSE_PRIVATE_KEY=…                      # keep this in a password manager, never in the repo
-node scripts/license.mjs issue customer@example.com 365 # a key valid for 365 days; omit days for perpetual
-```
-
-**Rotating the pair** (`keygen`, then commit the public key) invalidates every key issued
-with the old one. The pair was last rotated after v0.2.2; keys issued before then, and the
-dev pair's keys, do not unlock later builds. A local trial is
-bypassable by anyone willing to delete app data; a licence server is the upgrade path if that
-matters.
+Drift is fully available on every install. It has no license key, activation, trial, expiry or
+feature lock. Existing local data is preserved, and normal app and MCP behavior is never gated by
+license or clock state.

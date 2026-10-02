@@ -194,14 +194,14 @@ test('list_sources: every remembered source with workspace, kind, label and proj
   assert.equal(isGranted(join(dir, 'stranger')), false)
 })
 
-test('bridge: MCP switched off, or trial expired, refuses every method', async () => {
+test('bridge: MCP switch still refuses calls, but legacy license metadata does not', async () => {
   store.setMeta('mcp_enabled', '0')
   await assert.rejects(callBridge(dir, 'list_sources', {}), /turned off/i)
   store.setMeta('mcp_enabled', '1')
-  const started = store.getMeta('trial_started_at')
   store.setMeta('trial_started_at', String(Date.now() - 30 * 86_400_000))
-  await assert.rejects(callBridge(dir, 'list_sources', {}), /trial ended|license/i)
-  store.setMeta('trial_started_at', started ?? String(Date.now()))
+  store.setMeta('license_key', 'invalid legacy key')
+  const sources = (await callBridge(dir, 'list_sources', {})) as { sources: unknown[] }
+  assert.ok(sources.sources.length > 0)
 })
 
 test('compare_projects: different sources and project paths, pairs by identity, counts only', async () => {

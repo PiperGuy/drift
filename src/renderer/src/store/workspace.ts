@@ -14,7 +14,6 @@ import type {
   VaultSourceSpec,
   Workspace
 } from '@shared/channels'
-import type { LicenseState } from '@shared/license'
 
 /** Keys expected to differ per environment. Never counted as drift. */
 export const DEFAULT_IGNORE = ['NODE_ENV']
@@ -63,12 +62,9 @@ const readCollapsed = (): boolean => {
 
 type State = {
   page: PageId
-  /** null until main has answered; 'expired' locks the whole window. */
-  license: LicenseState | null
   /** null until main answers. false shows the first-run journey. */
   onboarded: boolean | null
   setOnboarded: (v: boolean) => Promise<void>
-  setLicense: (license: LicenseState) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
   /** An open file viewer has unsaved edits: navigation and root changes must ask first. */
@@ -153,13 +149,11 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 
 export const useWorkspace = create<State>((set, get) => ({
   page: 'workspace',
-  license: null,
   onboarded: null,
   setOnboarded: async (v) => {
     await window.plumbr.setSettings({ onboarded: v })
     set({ onboarded: v })
   },
-  setLicense: (license) => set({ license }),
   viewerDirty: false,
   setViewerDirty: (v) => set({ viewerDirty: v }),
   openFile: null,
@@ -305,9 +299,6 @@ export const useWorkspace = create<State>((set, get) => ({
   },
 
   init: async () => {
-    const license = await window.plumbr.getLicense()
-    set({ license })
-    if (license.state === 'expired') return
     set({ onboarded: (await window.plumbr.getSettings()).onboarded })
     await get().loadWorkspaces()
     const roots = await window.plumbr.recentWorkspaces()

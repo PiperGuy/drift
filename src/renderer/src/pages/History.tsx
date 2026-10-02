@@ -29,7 +29,6 @@ const KIND: Record<HistoryKind, { icon: LucideIcon; label: string; tone: string 
   compare: { icon: GitCompareArrows, label: 'Compared', tone: 'text-warn bg-warn-soft' },
   forget: { icon: Trash2, label: 'Forgot', tone: 'text-bad bg-bad-soft' },
   clear: { icon: Eraser, label: 'Cleared', tone: 'text-muted-foreground bg-muted' },
-  license: { icon: KeyRound, label: 'Licensed', tone: 'text-ok bg-ok-soft' },
   mcp_install: { icon: Bot, label: 'MCP added', tone: 'text-lemon-ink bg-lemon-soft' },
   mcp_uninstall: { icon: Bot, label: 'MCP removed', tone: 'text-muted-foreground bg-muted' },
   reveal: { icon: Eye, label: 'Revealed', tone: 'text-bad bg-bad-soft' },
@@ -65,8 +64,6 @@ function describe(e: HistoryEvent): string {
       return 'Workspace, receipts and history cleared'
     case 'clear':
       return 'Receipts and history cleared'
-    case 'license':
-      return `Key activated${e.subject['name'] ? ` for ${e.subject['name']}` : ''}`
     case 'mcp_install':
     case 'mcp_uninstall':
       return String(e.subject['client'] ?? '')

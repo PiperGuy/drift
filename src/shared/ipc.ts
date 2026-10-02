@@ -86,7 +86,6 @@ export const SetRequestSchema = z.object({
     .max(500)
 })
 export const SnapshotId = z.number().int().positive()
-export const LicenseKey = z.string().min(1).max(4096)
 export const McpClientIdSchema = z.enum([
   'claude-code',
   'claude-desktop',

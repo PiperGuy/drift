@@ -98,16 +98,6 @@ const plumbr: PlumbrApi = {
     mcpEnabled: p.mcpEnabled ?? true,
     onboarded: p.onboarded ?? true
   })),
-  getLicense: vi.fn(async () => ({
-    state: 'trial' as const,
-    endsAt: Date.now() + 86_400_000,
-    daysLeft: 1
-  })),
-  activateLicense: vi.fn(async () => ({
-    state: 'licensed' as const,
-    name: 'test',
-    expiresAt: null
-  })),
   checkUpdates: vi.fn(async () => ({ status: 'current' as const, version: '0.1.0' })),
   mcpClients: vi.fn(async () => []),
   mcpInstall: vi.fn(async () => []),
@@ -238,6 +228,14 @@ beforeEach(() => {
   useWorkspace.setState(initial, true)
 })
 afterEach(cleanup)
+
+test('startup loads the workspace without a license or trial check', async () => {
+  await act(() => useWorkspace.getState().init())
+
+  assert.equal(useWorkspace.getState().onboarded, true)
+  assert.equal((plumbr.getSettings as ReturnType<typeof vi.fn>).mock.calls.length, 1)
+  assert.equal((plumbr.recentWorkspaces as ReturnType<typeof vi.fn>).mock.calls.length, 1)
+})
 
 function assertNoFingerprints(): void {
   const html = document.body.innerHTML

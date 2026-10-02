@@ -6,7 +6,6 @@ import { PRODUCT } from '@shared/product'
 import type { AppInfo, Settings as SettingsT, UpdateResult } from '@shared/channels'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { LicenseForm } from '@/components/app/LicenseForm'
 import { McpClients } from '@/components/app/McpClients'
 import { HistoryPage } from '@/pages/History'
 import { AgentsPage } from '@/pages/Agents'
@@ -54,7 +53,6 @@ export function SettingsPage(): React.JSX.Element {
   const [settings, setSettings] = useState<SettingsT | null>(null)
   const [update, setUpdate] = useState<UpdateResult | 'checking' | null>(null)
   const { theme, setTheme } = useTheme()
-  const license = useWorkspace((s) => s.license)
   const reset = useWorkspace((s) => s.reset)
   const setOnboarded = useWorkspace((s) => s.setOnboarded)
   useEffect(() => {
@@ -107,38 +105,6 @@ export function SettingsPage(): React.JSX.Element {
               Replay the onboarding
             </Button>
             <Hint>Access, first receipt, agents and shortcuts. Your data is untouched.</Hint>
-          </Row>
-        </Section>
-
-        <Section title="License">
-          <Row label="Status">
-            {license?.state === 'licensed' ? (
-              <p className="text-sm">
-                <span className="text-ok">Licensed</span> to{' '}
-                <span className="font-medium">{license.name}</span>
-                {license.expiresAt && (
-                  <span className="text-muted-foreground">
-                    {' '}
-                    · until {new Date(license.expiresAt).toLocaleDateString()}
-                  </span>
-                )}
-              </p>
-            ) : license?.state === 'trial' ? (
-              <p className="text-sm">
-                <span className="text-warn">Trial</span> · {license.daysLeft} day
-                {license.daysLeft === 1 ? '' : 's'} left, ends{' '}
-                {new Date(license.endsAt).toLocaleDateString()}
-              </p>
-            ) : (
-              <p className="text-sm text-bad">Locked</p>
-            )}
-          </Row>
-          <Row label="Key">
-            <LicenseForm />
-            <Hint>
-              Keys look like <code className="font-mono">DRIFT-…</code> and are verified on this
-              machine. Nothing is sent anywhere.
-            </Hint>
           </Row>
         </Section>
 
@@ -253,7 +219,7 @@ export function SettingsPage(): React.JSX.Element {
         <Section title="Data">
           <Row label="Location">
             <code className="font-mono text-xs break-all">{info?.dataPath ?? '…'}</code>
-            <Hint>SQLite. Granted root, redacted receipts, history, settings and license.</Hint>
+            <Hint>SQLite. Granted root, redacted receipts, history and settings.</Hint>
           </Row>
           <Row label="Reset">
             <div className="flex flex-wrap gap-2">
@@ -283,7 +249,7 @@ export function SettingsPage(): React.JSX.Element {
                 Forget workspace and history
               </Button>
             </div>
-            <Hint>Neither touches the license or the fingerprint key.</Hint>
+            <Hint>Neither touches the fingerprint key.</Hint>
           </Row>
         </Section>
 

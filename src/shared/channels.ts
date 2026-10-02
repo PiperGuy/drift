@@ -5,7 +5,6 @@
  * Values never cross the bridge: only key names, fingerprints and classes.
  */
 import type { DriftReceipt, KeyEntry } from './drift'
-import type { LicenseState } from './license'
 import type { EnvView } from './env-lint'
 
 export const Channels = {
@@ -27,8 +26,6 @@ export const Channels = {
   dataClear: 'data:clear',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
-  licenseGet: 'license:get',
-  licenseActivate: 'license:activate',
   updateCheck: 'update:check',
   mcpClients: 'mcp:clients',
   mcpInstall: 'mcp:install',
@@ -129,7 +126,6 @@ export type HistoryKind =
   | 'compare'
   | 'forget'
   | 'clear'
-  | 'license'
   | 'mcp_install'
   | 'mcp_uninstall'
   | 'reveal'
@@ -445,9 +441,6 @@ export type PlumbrApi = {
   clearCache: () => Promise<void>
   getSettings: () => Promise<Settings>
   setSettings: (patch: Partial<Settings>) => Promise<Settings>
-  getLicense: () => Promise<LicenseState>
-  /** Verify and store a key. Resolves to the new state; rejects with a message on a bad key. */
-  activateLicense: (key: string) => Promise<LicenseState>
   checkUpdates: () => Promise<UpdateResult>
   mcpClients: () => Promise<McpClientStatus[]>
   mcpInstall: (id: McpClientId) => Promise<McpClientStatus[]>

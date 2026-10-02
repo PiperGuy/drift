@@ -20,7 +20,6 @@ import { dirname } from 'node:path'
 import { envKind } from '@shared/env-file'
 import { planSync } from '@shared/drift'
 import { PRODUCT } from '@shared/product'
-import { licenseState } from '@shared/license'
 import { grantRoot, revokeRoots, scanWorkspace } from '../main/workspace'
 import { joinRef, parseRef } from '../main/fs'
 import { compareFiles, envShape } from '../main/env'
@@ -33,7 +32,7 @@ const text = (v: unknown): { content: { type: 'text'; text: string }[] } => ({
 export function createMcpServer(dbPath: string): McpServer {
   /**
    * The roots granted in the app (local folders and ssh://host/path). Re-read per
-   * call so a new grant, the MCP toggle and the license all apply immediately.
+   * call so a new grant and the MCP toggle apply immediately.
    */
   function roots(): string[] {
     const db = new DatabaseSync(dbPath, { readOnly: true })
@@ -42,13 +41,6 @@ export function createMcpServer(dbPath: string): McpServer {
         (db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.['value'] as
           string | undefined) ?? null
       if (meta('mcp_enabled') === '0') throw new Error(`MCP is turned off in ${PRODUCT} settings.`)
-      const lic = licenseState({
-        key: meta('license_key'),
-        trialStartedAt: Number(meta('trial_started_at') ?? Date.now()),
-        lastSeen: Number(meta('last_seen') ?? 0)
-      })
-      if (lic.state === 'expired')
-        throw new Error(`${PRODUCT} trial has ended. Enter a license key in the app.`)
       // Only the active workspace, exactly like the app.
       const active = Number(meta('active_workspace') ?? 1)
       const rows = db
