@@ -6,6 +6,15 @@
 
 - remove license activation and trial gates; all Drift features are available without a key
 
+## [0.2.3](https://github.com/PiperGuy/drift/compare/v0.2.2...v0.2.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **history:** render legacy event kinds ([f09c434](https://github.com/PiperGuy/drift/commit/f09c43456c2492c1fb187584dd732b0fd9b1e943))
+* **license:** rotate the licence signing key off the development pair ([#16](https://github.com/PiperGuy/drift/issues/16)) ([f660d42](https://github.com/PiperGuy/drift/commit/f660d429a1a62412f7b347f1cee992ecb79d0131))
+* remove license gates ([52810b1](https://github.com/PiperGuy/drift/commit/52810b1c1baf4abe868d22e29ce14166bce1928b))
+
 ## [0.2.2](https://github.com/PiperGuy/drift/compare/v0.2.1...v0.2.2) (2026-09-20)
 
 
