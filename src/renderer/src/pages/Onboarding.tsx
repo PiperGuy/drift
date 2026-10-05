@@ -144,7 +144,7 @@ export function OnboardingPage(): React.JSX.Element {
   const mac = (info?.platform ?? (isMac ? 'darwin' : 'linux')) === 'darwin'
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="relative flex h-full flex-col bg-background">
       <Lattice className="absolute inset-0 size-full [mask-image:radial-gradient(ellipse_at_center,transparent_25%,black_85%)]" />
 
       {/* Progress */}

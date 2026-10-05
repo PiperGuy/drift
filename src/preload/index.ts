@@ -44,6 +44,11 @@ const plumbr: PlumbrApi = {
   vaultHistory: (path) => ipcRenderer.invoke(Channels.vaultHistory, path),
   vaultShapeAt: (req) => ipcRenderer.invoke(Channels.vaultShapeAt, req),
   vaultRestore: (req) => ipcRenderer.invoke(Channels.vaultRestore, req),
+  vaultDiscover: (spec) => ipcRenderer.invoke(Channels.vaultDiscover, spec),
+  vaultDiscoverMount: (req) => ipcRenderer.invoke(Channels.vaultDiscoverMount, req),
+  vaultDiscoverList: (req) => ipcRenderer.invoke(Channels.vaultDiscoverList, req),
+  vaultDiscoverVersions: (req) => ipcRenderer.invoke(Channels.vaultDiscoverVersions, req),
+  vaultDiscoverEnd: (session) => ipcRenderer.invoke(Channels.vaultDiscoverEnd, session),
   providerConnect: (spec) => ipcRenderer.invoke(Channels.providerConnect, spec),
   addDockerRoot: (req) => ipcRenderer.invoke(Channels.workspaceAddDocker, req),
   dockerContainers: (host) => ipcRenderer.invoke(Channels.dockerContainers, host),
@@ -51,6 +56,7 @@ const plumbr: PlumbrApi = {
   ecsDiscover: (req) => ipcRenderer.invoke(Channels.ecsDiscover, req),
   rootsAll: () => ipcRenderer.invoke(Channels.rootsAll),
   projectCompare: (req) => ipcRenderer.invoke(Channels.projectCompare, req),
+  setWindowTheme: (theme) => ipcRenderer.send(Channels.windowTheme, theme),
   onFullscreen: (cb) => {
     const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
     ipcRenderer.on(Channels.windowFullscreen, h)

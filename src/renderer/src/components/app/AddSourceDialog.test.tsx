@@ -84,7 +84,7 @@ test('vault guide: click pins it open, click again or Escape closes it', async (
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
   await closed()
   // The source dialog itself survives the Escape that closed the guide.
-  assert.ok(screen.getByRole('button', { name: /Connect and scan/ }))
+  assert.ok(screen.getByRole('button', { name: /Sign in and browse/ }))
 })
 
 test('vault guide: one step per form field, redacted placeholders, no token-shaped text', () => {
@@ -101,7 +101,7 @@ test('vault guide: one step per form field, redacted placeholders, no token-shap
   assert.doesNotMatch(text, /hvs\.[A-Za-z0-9]{8,}/)
   assert.doesNotMatch(document.body.innerHTML, /hvs\.[A-Za-z0-9]{8,}/)
   // Guide is informational: it neither replaces nor relaxes the form's own gating.
-  const connect = screen.getByRole('button', { name: /Connect and scan/ })
+  const connect = screen.getByRole('button', { name: /Sign in and browse/ })
   assert.ok(connect.hasAttribute('disabled'))
 })
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { ArrowRightLeft, FolderSearch, PanelLeft, Search, Settings } from 'lucide-react'
 import { toast } from 'sonner'
+import { useTheme } from 'next-themes'
 import { Logo } from '@/components/app/Logo'
 import { StatusBar } from '@/components/app/StatusBar'
 import { WorkspaceSwitcher } from '@/components/app/WorkspaceSwitcher'
@@ -59,6 +60,12 @@ export default function App(): React.JSX.Element {
   const width = useWorkspace((s) => s.sidebarWidth)
   const fullscreen = useWorkspace((s) => s.fullscreen)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  const { theme } = useTheme()
+  useEffect(() => {
+    if (theme === 'system' || theme === 'light' || theme === 'dark')
+      window.plumbr.setWindowTheme(theme)
+  }, [theme])
 
   const init = useWorkspace((s) => s.init)
   useEffect(() => {
@@ -128,10 +135,10 @@ export default function App(): React.JSX.Element {
   const strip = isMac && !fullscreen
 
   return (
-    <div className="flex h-full">
+    <div className="glass-shell flex h-full">
       <aside
         style={{ width: collapsed ? 56 : width }}
-        className="drag relative flex shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-(--duration-base) ease-(--ease-out)"
+        className="drag relative flex shrink-0 flex-col text-sidebar-foreground transition-[width] duration-(--duration-base) ease-(--ease-out)"
         data-collapsed={collapsed || undefined}
       >
         {/* Top strip: traffic lights (mac), sidebar toggle, search. */}
@@ -250,7 +257,8 @@ export default function App(): React.JSX.Element {
         {!collapsed && <Resizer />}
       </aside>
 
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      {/* The content sheet: opaque, lifted off the (glass) shell. */}
+      <div className="glass-sheet relative my-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden" key={page}>
           <div className="enter h-full">
             {page === 'workspace' && <WorkspacePage />}

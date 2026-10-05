@@ -15,9 +15,27 @@ import { StatusBadge } from '@/components/app/StatusBadge'
 import { fmtAgo } from '@/lib/format'
 import { useWorkspace } from '@/store/workspace'
 import { cn } from '@/lib/utils'
+import { versionState, type VersionState } from '@/lib/status'
 
 const err = (e: unknown): string =>
   e instanceof Error ? e.message.replace(/^.*Error: /, '') : String(e)
+
+/** The state word is the cue; colour only reinforces it. */
+export function VersionChip({ state }: { state: VersionState }): React.JSX.Element {
+  return (
+    <span
+      className={cn(
+        'shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase',
+        state === 'current' && 'bg-ok-soft text-ok',
+        state === 'live' && 'bg-muted text-muted-foreground',
+        state === 'deleted' && 'bg-warn-soft text-warn',
+        state === 'destroyed' && 'bg-bad-soft text-bad'
+      )}
+    >
+      {state}
+    </span>
+  )
+}
 
 /**
  * The version timeline of one Vault KV v2 environment: metadata only, straight
@@ -104,11 +122,7 @@ export function VaultVersions({
     }
   }
 
-  const state = (v: VaultVersionMeta): 'current' | 'live' | 'deleted' | 'destroyed' => {
-    if (v.destroyed) return 'destroyed'
-    if (v.deletionTime) return 'deleted'
-    return hist && v.version === hist.currentVersion ? 'current' : 'live'
-  }
+  const state = (v: VaultVersionMeta): VersionState => versionState(v, hist?.currentVersion)
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -146,17 +160,7 @@ export function VaultVersions({
                 return (
                   <li key={v.version} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <span className="w-10 shrink-0 font-mono text-xs">v{v.version}</span>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase',
-                        st === 'current' && 'bg-ok-soft text-ok',
-                        st === 'live' && 'bg-muted text-muted-foreground',
-                        st === 'deleted' && 'bg-warn-soft text-warn',
-                        st === 'destroyed' && 'bg-bad-soft text-bad'
-                      )}
-                    >
-                      {st}
-                    </span>
+                    <VersionChip state={st} />
                     <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                       {v.createdTime ? fmtAgo(Date.parse(v.createdTime)) : ''}
                       {v.createdBy?.actor ? ` · by ${v.createdBy.actor}` : ''}

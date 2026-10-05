@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Icon Composer foreground layer: the drift mark on a transparent canvas. -->
+  <g fill="none" stroke="#c8ff4d" stroke-width="112" stroke-linecap="round">
+    <path d="M286 408H650"/>
+    <path d="M398 616H738"/>
+  </g>
+  <circle cx="268" cy="616" r="52" fill="#c8ff4d"/>
+</svg>

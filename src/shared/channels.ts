@@ -41,11 +41,17 @@ export const Channels = {
   envSet: 'env:set',
   envRevealAll: 'env:reveal-all',
   windowFullscreen: 'window:fullscreen',
+  windowTheme: 'window:theme',
   sshHosts: 'ssh:hosts',
   vaultConnect: 'vault:connect',
   vaultHistory: 'vault:history',
   vaultShapeAt: 'vault:shape-at',
   vaultRestore: 'vault:restore',
+  vaultDiscover: 'vault:discover',
+  vaultDiscoverMount: 'vault:discover-mount',
+  vaultDiscoverList: 'vault:discover-list',
+  vaultDiscoverVersions: 'vault:discover-versions',
+  vaultDiscoverEnd: 'vault:discover-end',
   providerConnect: 'provider:connect',
   workspaceAddDocker: 'workspace:add-docker',
   dockerContainers: 'docker:containers',
@@ -230,7 +236,10 @@ export type ProjectCompareResult = {
 /* ---------- HashiCorp Vault KV v2 ---------- */
 
 export type VaultAuth =
-  { kind: 'token'; token: string } | { kind: 'approle'; roleId: string; secretId: string }
+  | { kind: 'token'; token: string }
+  | { kind: 'approle'; roleId: string; secretId: string }
+  /** Reuse the token a Browse Vault session already resolved in main. */
+  | { kind: 'session'; session: string }
 
 /** What the Add source dialog submits. The credential is used in main and never returned. */
 export type VaultSourceSpec = {
@@ -271,6 +280,35 @@ export type VaultPreflight = {
 }
 
 export type VaultConnectResult = { root: RootInfo; preflight: VaultPreflight }
+
+/** Sign in once to browse. Same fields as a source, minus the name, path and storage. */
+export type VaultDiscoverSpec = Pick<VaultSourceSpec, 'address' | 'namespace' | 'caPem'> & {
+  auth: Exclude<VaultAuth, { kind: 'session' }>
+}
+
+/** One KV v2 mount (other engines and KV v1 are counted, not listed). */
+export type VaultMount = { path: string; description: string }
+
+export type VaultDiscovery = {
+  /** Opaque id of the main-process session that holds the token. Not a credential. */
+  session: string
+  vaultVersion: string
+  token: VaultTokenInfo
+  /** null: this token may not enumerate mounts; browse a mount you name instead. */
+  mounts: VaultMount[] | null
+  /** Why mounts is null, or how many non-KV-v2 mounts were left out. */
+  mountsNote: string | null
+  warnings: string[]
+}
+
+/** A child under a mount: a folder of secrets/apps or one secret document. Names only. */
+export type VaultNode = { name: string; path: string; kind: 'folder' | 'secret' }
+
+export type VaultListing =
+  | { state: 'ok'; nodes: VaultNode[]; truncated: boolean }
+  /** Vault answers 404 both for an empty folder and for a missing list permission. */
+  | { state: 'empty' }
+  | { state: 'error'; denied: boolean; message: string }
 
 export type VaultVersionMeta = {
   version: number
@@ -460,6 +498,8 @@ export type PlumbrApi = {
   installUpdate: () => Promise<void>
   /** `Host` aliases from ~/.ssh/config, for the source dialog. Names only. */
   sshHosts: () => Promise<string[]>
+  /** Keep the native window appearance (and its vibrancy material) on the app's theme. */
+  setWindowTheme: (theme: 'system' | 'light' | 'dark') => void
   /** macOS full-screen transitions. */
   onFullscreen: (cb: (on: boolean) => void) => () => void
   /** The only write path. Main snapshots the target first. */
@@ -485,6 +525,27 @@ export type PlumbrApi = {
     version: number
     expectedVersion: number
   }) => Promise<ApplyResult>
+  /** Sign in once and enumerate KV v2 mounts. Metadata only; the token stays in main. */
+  vaultDiscover: (spec: VaultDiscoverSpec) => Promise<VaultDiscovery>
+  /** Resolve a typed path to its KV v2 mount (for tokens that cannot enumerate mounts). */
+  vaultDiscoverMount: (req: {
+    session: string
+    path: string
+  }) => Promise<{ mount: VaultMount; folder: string; secret: boolean }>
+  /** One level of <mount>/metadata/<folder>, loaded lazily on expansion. Names only. */
+  vaultDiscoverList: (req: {
+    session: string
+    mount: string
+    folder: string
+  }) => Promise<VaultListing>
+  /** Version timeline of one secret while browsing (metadata only, no values). */
+  vaultDiscoverVersions: (req: {
+    session: string
+    mount: string
+    path: string
+  }) => Promise<VaultHistory>
+  /** Forget a browse session's token. */
+  vaultDiscoverEnd: (session: string) => Promise<void>
   /** Preflight + connect a read-only provider source. Tokens never come back. */
   providerConnect: (spec: ProviderConnectSpec) => Promise<ProviderConnectResult>
   /** Verify with `docker exec`, then grant and remember a container directory. */

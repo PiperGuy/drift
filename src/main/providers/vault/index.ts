@@ -20,9 +20,12 @@ import type {
   RootInfo,
   ScanResult,
   VaultConnectResult,
+  VaultDiscoverSpec,
+  VaultDiscovery,
   VaultHistory,
   VaultPreflight,
-  VaultSourceSpec
+  VaultSourceSpec,
+  VaultTokenInfo
 } from '@shared/channels'
 import {
   approleLogin,
@@ -36,8 +39,10 @@ import {
   readMetadata,
   unwrap,
   writeData,
+  type TokenInfo,
   type VaultConfig
 } from './client'
+import { discoverySession, listMountsSafe, openDiscovery } from './discover'
 
 /**
  * HashiCorp Vault KV v2 adapter. One KV v2 secret document = one environment
@@ -228,18 +233,34 @@ export function registerVault(store: Store): void {
 
 const stripSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '')
 
-export async function connectVault(
-  store: Store,
-  spec: VaultSourceSpec
-): Promise<VaultConnectResult> {
+type SignIn = {
+  cfg: VaultConfig
+  vaultVersion: string
+  enterprise: boolean
+  info: TokenInfo
+  authKind: 'token' | 'approle'
+  warnings: string[]
+}
+
+/**
+ * Health, credential → client token, lookup-self. Shared by Connect and Browse
+ * Vault. A `session` auth reuses the token a browse session already resolved, so
+ * an AppRole secret_id is never spent twice. Errors never carry the credential.
+ */
+async function signIn(
+  spec: Pick<VaultSourceSpec, 'address' | 'namespace' | 'caPem' | 'auth'>
+): Promise<SignIn> {
   const warnings: string[] = []
-  const base: VaultConfig = {
-    address: spec.address.trim(),
-    namespace: spec.namespace?.trim() || undefined,
-    caPem: spec.caPem?.trim() || undefined,
-    serverName: undefined,
-    userAgent: ua()
-  }
+  const session = spec.auth.kind === 'session' ? discoverySession(spec.auth.session) : null
+  const base: VaultConfig = session
+    ? { ...session.cfg, token: undefined }
+    : {
+        address: spec.address.trim(),
+        namespace: spec.namespace?.trim() || undefined,
+        caPem: spec.caPem?.trim() || undefined,
+        serverName: undefined,
+        userAgent: ua()
+      }
 
   // 1. Reachability, TLS and seal state — unauthenticated, root namespace.
   const h = await health(base)
@@ -253,11 +274,13 @@ export async function connectVault(
   else if (h.status !== 200) throw new Error(`Vault health check failed (HTTP ${h.status}).`)
 
   // 2. Credentials → client token. AppRole secret_id is used once and discarded.
+  const auth = spec.auth
   let token: string
-  if (spec.auth.kind === 'approle') {
-    token = (await approleLogin(base, spec.auth.roleId, spec.auth.secretId)).token
+  if (auth.kind === 'session') token = session!.cfg.token!
+  else if (auth.kind === 'approle') {
+    token = (await approleLogin(base, auth.roleId, auth.secretId)).token
   } else {
-    token = spec.auth.token.trim()
+    token = auth.token.trim()
     if (await isWrappingToken(base, token)) token = await unwrap(base, token)
   }
   const cfg: VaultConfig = { ...base, token }
@@ -274,6 +297,30 @@ export async function connectVault(
   if (info.expireTime && Date.parse(info.expireTime) - Date.now() < 10 * 60_000)
     warnings.push('This token expires in under 10 minutes.')
   if (info.numUses > 0) warnings.push(`This token has only ${info.numUses} uses left.`)
+  return {
+    cfg,
+    vaultVersion: h.body?.version ?? 'unknown',
+    enterprise: Boolean(h.body?.enterprise),
+    info,
+    authKind: auth.kind === 'session' ? session!.authKind : auth.kind,
+    warnings
+  }
+}
+
+const tokenInfo = (info: TokenInfo): VaultTokenInfo => ({
+  accessor: info.accessor,
+  displayName: info.displayName,
+  policies: info.policies,
+  expireTime: info.expireTime,
+  renewable: info.renewable,
+  type: info.type
+})
+
+export async function connectVault(
+  store: Store,
+  spec: VaultSourceSpec
+): Promise<VaultConnectResult> {
+  const { cfg, vaultVersion, enterprise, info, authKind, warnings } = await signIn(spec)
 
   // 4. Mount resolution and KV version check.
   const full = stripSlashes(spec.path)
@@ -328,40 +375,51 @@ export async function connectVault(
     'vault',
     label,
     {
-      address: base.address,
-      namespace: base.namespace ?? null,
-      caPem: base.caPem ?? null,
+      address: cfg.address,
+      namespace: cfg.namespace ?? null,
+      caPem: cfg.caPem ?? null,
       mount: m.mount,
       path: rel,
-      authKind: spec.auth.kind,
+      authKind,
       storage
     },
-    storage === 'keychain' ? safeStorage.encryptString(JSON.stringify({ token })) : null
+    storage === 'keychain' ? safeStorage.encryptString(JSON.stringify({ token: cfg.token })) : null
   )
-  tokens.set(id, token)
+  tokens.set(id, cfg.token!)
 
   const rootPath = vaultRef(id, m.mount, rel)
   const root: RootInfo = { path: rootPath, kind: 'vault', label }
   const preflight: VaultPreflight = {
-    vaultVersion: h.body?.version ?? 'unknown',
-    enterprise: Boolean(h.body?.enterprise),
+    vaultVersion,
+    enterprise,
     mount: m.mount,
     kind,
     casRequired: m.config?.casRequired ?? false,
     maxVersions: m.config?.maxVersions ?? 0,
     deleteVersionAfter: m.config?.deleteVersionAfter ?? '0s',
-    token: {
-      accessor: info.accessor,
-      displayName: info.displayName,
-      policies: info.policies,
-      expireTime: info.expireTime,
-      renewable: info.renewable,
-      type: info.type
-    },
+    token: tokenInfo(info),
     capabilities: caps,
     warnings
   }
   return { root, preflight }
+}
+
+/**
+ * Browse Vault: sign in once, keep the token in a main-process session and
+ * enumerate KV v2 mounts. Nothing is persisted and no secret data is read; the
+ * tree below each mount is listed lazily by ./discover.
+ */
+export async function discoverVault(spec: VaultDiscoverSpec): Promise<VaultDiscovery> {
+  const { cfg, vaultVersion, info, authKind, warnings } = await signIn(spec)
+  const { mounts, note } = await listMountsSafe(cfg)
+  return {
+    session: openDiscovery(cfg, authKind, mounts),
+    vaultVersion,
+    token: tokenInfo(info),
+    mounts,
+    mountsNote: note,
+    warnings
+  }
 }
 
 /** Forget in-memory session tokens for removed connections (bulk forget/delete paths). */

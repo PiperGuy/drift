@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { FolderTree, Loader2, LogOut } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -11,9 +11,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useWorkspace, type SourceSpec } from '@/store/workspace'
 import { VaultGuide } from '@/components/app/VaultGuide'
+import { VaultBrowser, type VaultPick } from '@/components/app/VaultBrowser'
 import { SourceIcon } from '@/components/app/SourceIcon'
 import { cn } from '@/lib/utils'
-import type { EcsDiscovery, ProviderConnectSpec, RootInfo, RootKind } from '@shared/channels'
+import type {
+  EcsDiscovery,
+  ProviderConnectSpec,
+  RootInfo,
+  RootKind,
+  VaultDiscovery
+} from '@shared/channels'
 
 /**
  * A source is anywhere env values live. Local folders, SSH hosts (including EC2
@@ -233,6 +240,24 @@ export function AddSourceDialog({
   const [containers, setContainers] = useState<string[]>([])
   const [ecs, setEcs] = useState<EcsDiscovery | null>(null)
   const [looking, setLooking] = useState(false)
+  // Browse Vault: main holds the token; the renderer keeps only the session id.
+  const [disc, setDisc] = useState<VaultDiscovery | null>(null)
+  const [vpick, setVpick] = useState<VaultPick | null>(null)
+  // A folder pick can connect only once its listing shows a secret directly inside.
+  const [vpickReady, setVpickReady] = useState(false)
+  const discRun = useRef(0)
+  useEffect(() => {
+    const session = disc?.session
+    return () => {
+      if (session) void window.plumbr.vaultDiscoverEnd(session).catch(() => {})
+    }
+  }, [disc?.session])
+  useEffect(
+    () => () => {
+      discRun.current += 1 // a sign-in still in flight is ended when it lands
+    },
+    []
+  )
   useEffect(() => {
     window.plumbr.sshHosts().then(setAliases)
     window.plumbr
@@ -341,9 +366,10 @@ export function AddSourceDialog({
         address: g('addr'),
         namespace: g('ns') || undefined,
         caPem: g('ca') || undefined,
-        path: g('vpath'),
-        auth:
-          (f['auth'] ?? 'token') === 'approle'
+        path: browsing && disc && vpick ? `${vpick.mount}/${vpick.path}` : g('vpath'),
+        auth: disc
+          ? { kind: 'session', session: disc.session }
+          : (f['auth'] ?? 'token') === 'approle'
             ? { kind: 'approle', roleId: g('roleId'), secretId: f['secretId'] ?? '' }
             : { kind: 'token', token: f['token'] ?? '' },
         storage
@@ -351,6 +377,45 @@ export function AddSourceDialog({
     const p = provider()
     if (p) return { kind: 'provider', name, spec: p }
     return { kind: 'local', name }
+  }
+
+  const vmode = f['vmode'] ?? (mode === 'edit' ? 'path' : 'browse')
+  const browsing = kind === 'vault' && vmode === 'browse'
+
+  const signOut = (): void => {
+    discRun.current += 1
+    setDisc(null)
+    setVpick(null)
+  }
+
+  /** Sign in once and list mounts. Cancel (or closing) drops a reply still in flight. */
+  const discover = async (): Promise<void> => {
+    const run = ++discRun.current
+    setBusy(true)
+    setError(null)
+    try {
+      const d = await window.plumbr.vaultDiscover({
+        address: g('addr'),
+        namespace: g('ns') || undefined,
+        caPem: g('ca') || undefined,
+        auth:
+          (f['auth'] ?? 'token') === 'approle'
+            ? { kind: 'approle', roleId: g('roleId'), secretId: f['secretId'] ?? '' }
+            : { kind: 'token', token: f['token'] ?? '' }
+      })
+      if (run !== discRun.current) {
+        void window.plumbr.vaultDiscoverEnd(d.session).catch(() => {})
+        return
+      }
+      // The credential is now held in main only; clear it from the form.
+      setF((x) => ({ ...x, token: '', secretId: '' }))
+      setVpick(null)
+      setDisc(d)
+    } catch (e) {
+      if (run === discRun.current) setError(err(e))
+    } finally {
+      if (run === discRun.current) setBusy(false)
+    }
   }
 
   const connect = async (): Promise<void> => {
@@ -372,6 +437,8 @@ export function AddSourceDialog({
   }
 
   const token = Boolean(f['token'])
+  const creds =
+    (f['auth'] ?? 'token') === 'approle' ? Boolean(g('roleId')) && Boolean(f['secretId']) : token
   const https = /^https?:\/\//.test(g('addr'))
   const ready = ((): boolean => {
     switch (kind) {
@@ -385,13 +452,8 @@ export function AddSourceDialog({
           /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(g('container')) && (f['path'] ?? '').startsWith('/')
         )
       case 'vault':
-        return (
-          https &&
-          Boolean(g('vpath')) &&
-          ((f['auth'] ?? 'token') === 'approle'
-            ? Boolean(g('roleId')) && Boolean(f['secretId'])
-            : token)
-        )
+        if (browsing) return disc ? vpick !== null && vpickReady : https && creds
+        return Boolean(g('vpath')) && (disc !== null || (https && creds))
       case 'ecs':
         return (
           REGION.test(g('region')) &&
@@ -535,6 +597,7 @@ export function AddSourceDialog({
                   onClick={() => {
                     setKind(s.id)
                     setError(null)
+                    signOut()
                     // A token pasted for one provider must never be reused for another.
                     setF(mode === 'edit' && s.id === seed.kind ? seed.f : DEFAULTS)
                   }}
@@ -567,7 +630,7 @@ export function AddSourceDialog({
             className="@container min-h-0 overflow-y-auto p-5"
             onSubmit={(e) => {
               e.preventDefault()
-              if (ready) void connect()
+              if (ready) void (browsing && !disc ? discover() : connect())
             }}
           >
             <DialogHeader>
@@ -583,7 +646,7 @@ export function AddSourceDialog({
               <DialogDescription>{src.blurb}</DialogDescription>
             </DialogHeader>
 
-            <fieldset className="mt-4 space-y-3" disabled={busy}>
+            <fieldset className="mt-4 min-w-0 space-y-3" disabled={busy}>
               <Field
                 label="Name"
                 hint="How it shows in the source switcher. Leave empty to use the folder, host or project name."
@@ -921,109 +984,171 @@ export function AddSourceDialog({
               )}
               {kind === 'vault' && (
                 <>
-                  <div className="grid gap-3 @lg:grid-cols-[3fr_2fr]">
-                    <Field
-                      label="Address"
-                      hint="Same as VAULT_ADDR. https:// — plain http only for a local Vault Proxy."
-                    >
-                      <Input
-                        value={f['addr'] ?? ''}
-                        onChange={(e) => set('addr', e.target.value)}
-                        placeholder="https://vault.example.com:8200"
-                        className={mono}
-                        spellCheck={false}
-                        autoComplete="off"
-                        autoFocus
-                      />
-                    </Field>
-                    <Field
-                      label="Namespace"
-                      hint='Enterprise / HCP only. HCP Vault Dedicated: usually "admin".'
-                    >
-                      <Input
-                        value={f['ns'] ?? ''}
-                        onChange={(e) => set('ns', e.target.value)}
-                        className={mono}
-                        spellCheck={false}
-                        autoComplete="off"
-                      />
-                    </Field>
-                  </div>
-                  <Field
-                    label="KV v2 path (mount included)"
-                    hint="A secret document becomes one environment; point at a folder and each secret inside becomes one."
-                  >
-                    <Input
-                      value={f['vpath'] ?? ''}
-                      onChange={(e) => set('vpath', e.target.value)}
-                      placeholder="secret/apps/api"
-                      className={mono}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  </Field>
                   <div
                     className="inline-flex rounded-md border p-0.5"
                     role="tablist"
-                    aria-label="Authentication"
+                    aria-label="How to choose the secret"
                   >
-                    {(['token', 'approle'] as const).map((a) => (
+                    {(['browse', 'path'] as const).map((m) => (
                       <button
-                        key={a}
+                        key={m}
                         type="button"
                         role="tab"
-                        aria-selected={(f['auth'] ?? 'token') === a}
-                        onClick={() => set('auth', a)}
+                        aria-selected={vmode === m}
+                        onClick={() => {
+                          set('vmode', m)
+                          setError(null)
+                        }}
                         className={cn(
-                          'h-6 rounded-sm px-2.5 text-[11px] uppercase transition-colors duration-(--duration-fast)',
-                          (f['auth'] ?? 'token') === a
+                          'h-6 rounded-sm px-2.5 text-[11px] transition-colors duration-(--duration-fast)',
+                          vmode === m
                             ? 'bg-accent font-medium'
                             : 'text-muted-foreground hover:text-foreground'
                         )}
                       >
-                        {a === 'token' ? 'Token' : 'AppRole'}
+                        {m === 'browse' ? 'Browse Vault' : 'Enter a path'}
                       </button>
                     ))}
                   </div>
-                  {(f['auth'] ?? 'token') === 'token' ? (
+                  {disc ? (
+                    <div className="space-y-1.5 rounded-lg border bg-background px-3 py-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <FolderTree
+                          className="size-3.5 shrink-0 text-lemon-ink"
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          Signed in to <span className="font-mono">{g('addr')}</span> · Vault{' '}
+                          {disc.vaultVersion} · {disc.token.displayName || 'token'} (
+                          {disc.token.policies.join(', ')})
+                        </span>
+                        <Button type="button" size="xs" variant="ghost" onClick={signOut}>
+                          <LogOut /> Sign out
+                        </Button>
+                      </div>
+                      {disc.warnings.map((w) => (
+                        <p key={w} className="text-[11px] text-warn">
+                          {w}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid gap-3 @lg:grid-cols-[3fr_2fr]">
+                        <Field
+                          label="Address"
+                          hint="Same as VAULT_ADDR. https:// — plain http only for a local Vault Proxy."
+                        >
+                          <Input
+                            value={f['addr'] ?? ''}
+                            onChange={(e) => set('addr', e.target.value)}
+                            placeholder="https://vault.example.com:8200"
+                            className={mono}
+                            spellCheck={false}
+                            autoComplete="off"
+                            autoFocus
+                          />
+                        </Field>
+                        <Field
+                          label="Namespace"
+                          hint='Enterprise / HCP only. HCP Vault Dedicated: usually "admin".'
+                        >
+                          <Input
+                            value={f['ns'] ?? ''}
+                            onChange={(e) => set('ns', e.target.value)}
+                            className={mono}
+                            spellCheck={false}
+                            autoComplete="off"
+                          />
+                        </Field>
+                      </div>
+                      <div
+                        className="inline-flex rounded-md border p-0.5"
+                        role="tablist"
+                        aria-label="Authentication"
+                      >
+                        {(['token', 'approle'] as const).map((a) => (
+                          <button
+                            key={a}
+                            type="button"
+                            role="tab"
+                            aria-selected={(f['auth'] ?? 'token') === a}
+                            onClick={() => set('auth', a)}
+                            className={cn(
+                              'h-6 rounded-sm px-2.5 text-[11px] uppercase transition-colors duration-(--duration-fast)',
+                              (f['auth'] ?? 'token') === a
+                                ? 'bg-accent font-medium'
+                                : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            {a === 'token' ? 'Token' : 'AppRole'}
+                          </button>
+                        ))}
+                      </div>
+                      {(f['auth'] ?? 'token') === 'token' ? (
+                        <Field
+                          label="Token"
+                          hint="From `vault login` or your admin. A wrapping token is unwrapped once. Never written unencrypted."
+                        >
+                          <Input
+                            type="password"
+                            value={f['token'] ?? ''}
+                            onChange={(e) => set('token', e.target.value)}
+                            className={mono}
+                            autoComplete="off"
+                          />
+                        </Field>
+                      ) : (
+                        <div className="grid gap-3 @lg:grid-cols-2">
+                          <Field label="Role ID">
+                            <Input
+                              value={f['roleId'] ?? ''}
+                              onChange={(e) => set('roleId', e.target.value)}
+                              className={mono}
+                              spellCheck={false}
+                              autoComplete="off"
+                            />
+                          </Field>
+                          <Field
+                            label="Secret ID"
+                            hint="Used once to log in, then discarded. AppRole is designed for machines: each login consumes a secret_id use, and CIDR-bound roles fail from a laptop that changes networks."
+                          >
+                            <Input
+                              type="password"
+                              value={f['secretId'] ?? ''}
+                              onChange={(e) => set('secretId', e.target.value)}
+                              className={mono}
+                              autoComplete="off"
+                            />
+                          </Field>
+                        </div>
+                      )}
+                      {caField}
+                    </>
+                  )}
+                  {!browsing && (
                     <Field
-                      label="Token"
-                      hint="From `vault login` or your admin. A wrapping token is unwrapped once. Never written unencrypted."
+                      label="KV v2 path (mount included)"
+                      hint="A secret document becomes one environment; point at a folder and each secret inside becomes one."
                     >
                       <Input
-                        type="password"
-                        value={f['token'] ?? ''}
-                        onChange={(e) => set('token', e.target.value)}
+                        value={f['vpath'] ?? ''}
+                        onChange={(e) => set('vpath', e.target.value)}
+                        placeholder="secret/apps/api"
                         className={mono}
+                        spellCheck={false}
                         autoComplete="off"
                       />
                     </Field>
-                  ) : (
-                    <div className="grid gap-3 @lg:grid-cols-2">
-                      <Field label="Role ID">
-                        <Input
-                          value={f['roleId'] ?? ''}
-                          onChange={(e) => set('roleId', e.target.value)}
-                          className={mono}
-                          spellCheck={false}
-                          autoComplete="off"
-                        />
-                      </Field>
-                      <Field
-                        label="Secret ID"
-                        hint="Used once to log in, then discarded. AppRole is designed for machines: each login consumes a secret_id use, and CIDR-bound roles fail from a laptop that changes networks."
-                      >
-                        <Input
-                          type="password"
-                          value={f['secretId'] ?? ''}
-                          onChange={(e) => set('secretId', e.target.value)}
-                          className={mono}
-                          autoComplete="off"
-                        />
-                      </Field>
-                    </div>
                   )}
-                  {caField}
+                  {browsing && disc && (
+                    <VaultBrowser
+                      discovery={disc}
+                      picked={vpick}
+                      onPick={setVpick}
+                      onReadyChange={setVpickReady}
+                    />
+                  )}
                   <label className="flex items-center gap-2 text-xs">
                     <input
                       type="checkbox"
@@ -1034,9 +1159,9 @@ export function AddSourceDialog({
                     Save the token in the OS keyring (unticked: kept for this session only)
                   </label>
                   <p className="text-[11px] text-muted-foreground">
-                    Connect checks health, your token, the KV v2 mount and your permissions before
-                    anything is saved. Reads render redacted shapes; every write is a reviewed,
-                    check-and-set-guarded new version.
+                    {browsing && !disc
+                      ? 'Sign in once to list KV v2 mounts, apps and secrets: names and version metadata only, never values. The token stays in this session unless you save it to the keyring.'
+                      : 'Connect checks health, your token, the KV v2 mount and your permissions before anything is saved. Reads render redacted shapes; every write is a reviewed, check-and-set-guarded new version.'}
                   </p>
                 </>
               )}
@@ -1195,7 +1320,12 @@ export function AddSourceDialog({
               </p>
             )}
             <div className="mt-5 flex items-center justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onClose}
+                disabled={busy && !(browsing && !disc)}
+              >
                 Cancel
               </Button>
               <Button type="submit" className="press" disabled={!ready || busy}>
@@ -1210,9 +1340,15 @@ export function AddSourceDialog({
                     : 'Save'
                   : kind === 'local'
                     ? 'Choose directory'
-                    : busy
-                      ? 'Connecting'
-                      : 'Connect and scan'}
+                    : browsing && !disc
+                      ? busy
+                        ? 'Signing in'
+                        : 'Sign in and browse'
+                      : busy
+                        ? 'Connecting'
+                        : browsing && vpick?.kind === 'folder'
+                          ? 'Connect folder'
+                          : 'Connect and scan'}
               </Button>
             </div>
           </form>
