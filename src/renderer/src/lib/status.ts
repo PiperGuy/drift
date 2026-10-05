@@ -1,4 +1,5 @@
 import type { DriftStatus } from '@shared/drift'
+import type { VaultVersionMeta } from '@shared/channels'
 
 /**
  * Every status has a colour, a glyph and a word, so it survives colour-blindness,
@@ -51,3 +52,15 @@ export const STATUS_META: Record<
     tone: 'text-muted-foreground bg-transparent border-border'
   }
 }
+
+export type VersionState = 'current' | 'live' | 'deleted' | 'destroyed'
+
+/** Vault KV v2 version state from its metadata (no data read). */
+export const versionState = (v: VaultVersionMeta, current?: number): VersionState =>
+  v.destroyed
+    ? 'destroyed'
+    : v.deletionTime
+      ? 'deleted'
+      : v.version === current
+        ? 'current'
+        : 'live'

@@ -39,6 +39,14 @@ export class VaultHttpError extends Error {
   }
 }
 
+/**
+ * Cap for sign-in and token calls (health, lookup/renew, AppRole, wrapping,
+ * capabilities): their answers are a few KB. KV data reads and writes stay
+ * uncapped, so no secret Vault accepted (operators can raise max_request_size)
+ * is refused; discovery passes its own cap.
+ */
+const SIGN_IN_BYTES = 1024 * 1024
+
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i
 
 export function assertAddress(address: string): URL {
@@ -64,6 +72,8 @@ export async function vaultRequest(
     /** sys/health must be asked in the root namespace. */
     noNamespace?: boolean
     timeoutMs?: number
+    /** Abort (as an error) once the response body exceeds this many bytes. */
+    maxBytes?: number
   }
 ): Promise<VaultResponse> {
   const base = assertAddress(cfg.address)
@@ -101,10 +111,26 @@ export async function vaultRequest(
     req.on('timeout', () => {
       req.destroy(new Error('timed out'))
     })
-    req.on('error', (e) => reject(new Error(`Vault unreachable at ${base.host}: ${e.message}`)))
+    req.on('error', (e) =>
+      reject(
+        new Error(
+          e.message === 'response too large'
+            ? `Vault at ${base.host} answered with more data than Drift reads in one response.`
+            : `Vault unreachable at ${base.host}: ${e.message}`
+        )
+      )
+    )
     req.on('response', (res) => {
       const chunks: Buffer[] = []
-      res.on('data', (c: Buffer) => chunks.push(c))
+      let size = 0
+      res.on('data', (c: Buffer) => {
+        size += c.length
+        if (opts.maxBytes && size > opts.maxBytes) {
+          req.destroy(new Error('response too large'))
+          return
+        }
+        chunks.push(c)
+      })
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8')
         let json: Record<string, unknown> | null = null
@@ -147,7 +173,13 @@ export async function health(
 ): Promise<{ status: number; body: HealthBody | null }> {
   const r = await vaultRequest(
     { ...cfg, token: undefined },
-    { method: 'GET', path: '/v1/sys/health', noNamespace: true, timeoutMs: 10_000 }
+    {
+      method: 'GET',
+      path: '/v1/sys/health',
+      noNamespace: true,
+      timeoutMs: 10_000,
+      maxBytes: SIGN_IN_BYTES
+    }
   )
   return { status: r.status, body: (r.json as HealthBody | null) ?? null }
 }
@@ -180,12 +212,20 @@ const toTokenInfo = (d: Record<string, unknown>): TokenInfo => ({
 })
 
 export async function lookupSelf(cfg: VaultConfig): Promise<TokenInfo> {
-  const r = await vaultRequest(cfg, { method: 'GET', path: '/v1/auth/token/lookup-self' })
+  const r = await vaultRequest(cfg, {
+    method: 'GET',
+    path: '/v1/auth/token/lookup-self',
+    maxBytes: SIGN_IN_BYTES
+  })
   return toTokenInfo(expectOk(r, 'token lookup'))
 }
 
 export async function renewSelf(cfg: VaultConfig): Promise<TokenInfo> {
-  const r = await vaultRequest(cfg, { method: 'POST', path: '/v1/auth/token/renew-self' })
+  const r = await vaultRequest(cfg, {
+    method: 'POST',
+    path: '/v1/auth/token/renew-self',
+    maxBytes: SIGN_IN_BYTES
+  })
   if (r.status !== 200) throw new VaultHttpError(r.status, errorsOf(r), 'token renew')
   // The renewed TTL must be read from the response, not assumed.
   return lookupSelf(cfg)
@@ -199,7 +239,8 @@ export async function approleLogin(
   const r = await vaultRequest(cfg, {
     method: 'POST',
     path: '/v1/auth/approle/login',
-    body: { role_id: roleId, secret_id: secretId }
+    body: { role_id: roleId, secret_id: secretId },
+    maxBytes: SIGN_IN_BYTES
   })
   if (r.status !== 200) throw new VaultHttpError(r.status, errorsOf(r), 'AppRole login')
   const auth = r.json?.['auth'] as Record<string, unknown> | undefined
@@ -223,7 +264,8 @@ export async function capabilities(
   const r = await vaultRequest(cfg, {
     method: 'POST',
     path: '/v1/sys/capabilities-self',
-    body: { paths }
+    body: { paths },
+    maxBytes: SIGN_IN_BYTES
   })
   const d = expectOk(r, 'capability check')
   const out: Record<string, string[]> = {}
@@ -239,46 +281,184 @@ const toMountConfig = (d: Record<string, unknown>): MountConfig => ({
   deleteVersionAfter: String(d['delete_version_after'] ?? '0s')
 })
 
+/** Deepest mount nesting the fallback probes; Vault mounts are rarely deeper than this. */
+const MAX_MOUNT_DEPTH = 8
+/** LIST hops spent confirming a folder (descending to its first secret). */
+const CONFIRM_HOPS = 3
+/** Response cap for discovery and mount probing. */
+const DISCOVERY_BYTES = 4 * 1024 * 1024
+
+type Json = Record<string, unknown>
+const obj = (v: unknown): Json | null =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null
+
+/**
+ * A KV v2 /config body: all three typed fields, which a KV v1 secret named
+ * "config" lacks — and no version timeline, so the metadata of a KV v2 secret
+ * named "config" (same three fields) cannot make `<mount>/metadata` look like a mount.
+ */
+const isKv2Config = (d: Json | null): d is Json =>
+  typeof d?.['max_versions'] === 'number' &&
+  typeof d['cas_required'] === 'boolean' &&
+  typeof d['delete_version_after'] === 'string' &&
+  !('current_version' in d) &&
+  !('versions' in d)
+
+/** A KV v2 metadata body: numeric versions plus a non-empty, numerically keyed timeline. */
+const isKv2Metadata = (d: Json | null): boolean => {
+  const versions = obj(d?.['versions'])
+  return (
+    typeof d?.['current_version'] === 'number' &&
+    typeof d['oldest_version'] === 'number' &&
+    versions !== null &&
+    Object.keys(versions).length > 0 &&
+    Object.keys(versions).every((k) => /^\d+$/.test(k))
+  )
+}
+
+/**
+ * Which mount a full path lives on, as Vault's own mount table says
+ * (sys/internal/ui/mounts/:path, explicitly unstable API). Sends nothing to the
+ * mount itself, so it can never read a secret value. Null when Vault would not say.
+ */
+export async function uiMount(
+  cfg: VaultConfig,
+  fullPath: string
+): Promise<{ mount: string; kvVersion: '1' | '2' | 'unknown' } | null> {
+  const r = await vaultRequest(cfg, {
+    method: 'GET',
+    path: `/v1/sys/internal/ui/mounts/${encodePath(fullPath)}`,
+    maxBytes: DISCOVERY_BYTES
+  })
+  if (r.status !== 200) return null
+  const d = obj(r.json?.['data']) ?? {}
+  const mount = String(d['path'] ?? `${fullPath.split('/')[0]}/`).replace(/\/+$/, '')
+  const kv = d['type'] === 'kv'
+  return {
+    mount,
+    kvVersion: kv && obj(d['options'])?.['version'] === '2' ? '2' : kv ? '1' : 'unknown'
+  }
+}
+
 /**
  * Which mount a full path (mount included) lives on, and whether it is KV v2.
- * Tries sys/internal/ui/mounts/:path (explicitly unstable API), then falls back
- * to reading <first-segment>/config, which only a KV v2 mount answers.
+ * Tries uiMount first. If that is denied, probes each leading prefix as a candidate mount (mounts may be
+ * nested, e.g. teams/payments), shortest first; Vault forbids overlapping
+ * mounts, so the first prefix that proves KV v2 is the mount:
+ *  1. <prefix>/config shaped like KV v2 mount config;
+ *  2. for tokens without config read: <prefix>/metadata/<rest> shaped like a
+ *     KV v2 version timeline, or, for a folder, a LIST of it confirmed by the
+ *     metadata of the first secret below it (at most CONFIRM_HOPS lists).
+ * The strict shapes keep a KV v1 mount, whose `config` or `metadata/...` would
+ * be ordinary secrets, from passing as KV v2. They stop accidental look-alikes, not
+ * forgery: someone able to write KV v1 secrets shaped exactly like KV v2 answers
+ * could pass. That needs write access to that Vault already, and any write that
+ * follows still goes through a human-approved, check-and-set-guarded plan. Probe bodies stay in this
+ * function and are capped in size; nothing from them is returned. On a KV v1 mount
+ * these probes are secret reads, so Browse Vault never uses this (see uiMount); only
+ * connecting a typed source path, which reads values anyway, does.
  */
 export async function mountFor(
   cfg: VaultConfig,
   fullPath: string
 ): Promise<{ mount: string; kvVersion: '1' | '2' | 'unknown'; config: MountConfig | null }> {
+  const get = (path: string): Promise<VaultResponse> =>
+    vaultRequest(cfg, { method: 'GET', path, maxBytes: DISCOVERY_BYTES })
   const first = fullPath.split('/')[0]
+  const ui = await uiMount(cfg, fullPath)
+  if (ui) {
+    const { mount } = ui
+    if (ui.kvVersion !== '2') return { ...ui, config: null }
+    const c = await get(`/v1/${encodePath(mount)}/config`)
+    const cd = obj(c.json?.['data'])
+    return { mount, kvVersion: '2', config: c.status === 200 && cd ? toMountConfig(cd) : null }
+  }
+
+  const segs = fullPath.split('/')
+  const prefixes = segs
+    .slice(0, MAX_MOUNT_DEPTH)
+    .map((_, i) => ({ mount: segs.slice(0, i + 1).join('/'), rest: segs.slice(i + 1).join('/') }))
+  for (const { mount } of prefixes) {
+    const c = await get(`/v1/${encodePath(mount)}/config`)
+    const d = obj(c.json?.['data'])
+    if (c.status === 200 && isKv2Config(d))
+      return { mount, kvVersion: '2', config: toMountConfig(d) }
+  }
+  const metadata = async (mount: string, path: string): Promise<boolean> => {
+    const m = await get(`/v1/${encodePath(mount)}/metadata/${encodePath(path)}`)
+    return m.status === 200 && isKv2Metadata(obj(m.json?.['data']))
+  }
+  /** A folder counts only once a secret below it shows a KV v2 timeline. */
+  const folderConfirmed = async (mount: string, folder: string): Promise<boolean> => {
+    for (let hop = 0; hop < CONFIRM_HOPS; hop++) {
+      const l = await get(
+        `/v1/${encodePath(mount)}/metadata${folder ? `/${encodePath(folder)}` : ''}?list=true`
+      )
+      const keys = obj(l.json?.['data'])?.['keys']
+      if (l.status !== 200 || !Array.isArray(keys)) return false
+      const names = keys.filter((k): k is string => typeof k === 'string' && k !== '')
+      const join = (k: string): string => (folder ? `${folder}/${k}` : k)
+      const leaf = names.find((k) => !k.endsWith('/'))
+      if (leaf !== undefined) return metadata(mount, join(leaf))
+      const sub = names.find((k) => k.endsWith('/'))
+      if (sub === undefined) return false
+      folder = join(sub.slice(0, -1))
+    }
+    return false
+  }
+  for (const { mount, rest } of prefixes) {
+    if ((rest && (await metadata(mount, rest))) || (await folderConfirmed(mount, rest)))
+      return { mount, kvVersion: '2', config: null }
+  }
+  return { mount: first, kvVersion: 'unknown', config: null }
+}
+
+export type MountEntry = { path: string; type: string; version: string; description: string }
+
+const toMounts = (m: Record<string, unknown> | undefined): MountEntry[] =>
+  Object.entries(m ?? {})
+    .filter(([, v]) => v !== null && typeof v === 'object')
+    .map(([path, v]) => {
+      const o = v as Record<string, unknown>
+      const opts = (o['options'] as Record<string, unknown> | null) ?? {}
+      return {
+        path: path.replace(/\/+$/, ''),
+        type: String(o['type'] ?? ''),
+        version: String(opts['version'] ?? ''),
+        description: typeof o['description'] === 'string' ? o['description'] : ''
+      }
+    })
+
+/**
+ * Every secrets-engine mount the token may see. Tries the official GET /sys/mounts
+ * (needs read on sys/mounts, e.g. a root or admin token) first, then
+ * sys/internal/ui/mounts, which Vault filters to mounts the token has any
+ * capability on (unstable API, but it is what the Vault UI itself uses).
+ * Throws the last VaultHttpError when neither answers.
+ */
+export async function listMounts(
+  cfg: VaultConfig
+): Promise<{ source: 'sys/mounts' | 'ui'; mounts: MountEntry[] }> {
   const r = await vaultRequest(cfg, {
     method: 'GET',
-    path: `/v1/sys/internal/ui/mounts/${encodePath(fullPath)}`
+    path: '/v1/sys/mounts',
+    maxBytes: DISCOVERY_BYTES
   })
   if (r.status === 200) {
-    const d = (r.json?.['data'] as Record<string, unknown>) ?? {}
-    const mount = String(d['path'] ?? `${first}/`).replace(/\/+$/, '')
-    const isKv2 =
-      d['type'] === 'kv' && (d['options'] as Record<string, unknown> | null)?.['version'] === '2'
-    if (!isKv2) return { mount, kvVersion: d['type'] === 'kv' ? '1' : 'unknown', config: null }
-    const c = await vaultRequest(cfg, { method: 'GET', path: `/v1/${encodePath(mount)}/config` })
-    return {
-      mount,
-      kvVersion: '2',
-      config:
-        c.status === 200 ? toMountConfig((c.json?.['data'] as Record<string, unknown>) ?? {}) : null
-    }
+    // Older servers return the mounts at the top level, newer ones also under data.
+    const d = (r.json?.['data'] as Record<string, unknown> | undefined) ?? r.json ?? {}
+    return { source: 'sys/mounts', mounts: toMounts(d) }
   }
-  // Unstable endpoint unavailable: only a KV v2 mount answers /config with max_versions.
-  const c = await vaultRequest(cfg, { method: 'GET', path: `/v1/${encodePath(first)}/config` })
-  if (
-    c.status === 200 &&
-    (c.json?.['data'] as Record<string, unknown>)?.['max_versions'] !== undefined
-  )
-    return {
-      mount: first,
-      kvVersion: '2',
-      config: toMountConfig((c.json?.['data'] as Record<string, unknown>) ?? {})
-    }
-  return { mount: first, kvVersion: 'unknown', config: null }
+  const u = await vaultRequest(cfg, {
+    method: 'GET',
+    path: '/v1/sys/internal/ui/mounts',
+    maxBytes: DISCOVERY_BYTES
+  })
+  if (u.status === 200) {
+    const d = (u.json?.['data'] as Record<string, unknown> | undefined) ?? {}
+    return { source: 'ui', mounts: toMounts(d['secret'] as Record<string, unknown> | undefined) }
+  }
+  throw new VaultHttpError(r.status, errorsOf(r), 'mount listing')
 }
 
 export type VersionMeta = {
@@ -318,16 +498,23 @@ const encodePath = (p: string): string => p.split('/').map(encodeURIComponent).j
 export async function list(
   cfg: VaultConfig,
   mount: string,
-  folder: string
+  folder: string,
+  maxBytes?: number
 ): Promise<{ keys: string[] } | { empty: true }> {
   const p = folder
     ? `${encodePath(mount)}/metadata/${encodePath(folder)}`
     : `${encodePath(mount)}/metadata`
-  const r = await vaultRequest(cfg, { method: 'GET', path: `/v1/${p}?list=true` })
+  const r = await vaultRequest(cfg, {
+    method: 'GET',
+    path: `/v1/${p}?list=true`,
+    maxBytes,
+    timeoutMs: maxBytes ? 15_000 : undefined
+  })
   // Empty and permission-denied both answer 404 {"errors":[]}; Vault does not say which.
   if (r.status === 404) return { empty: true }
   const d = expectOk(r, 'list')
-  return { keys: ((d['keys'] as string[]) ?? []).slice().sort() }
+  const keys = Array.isArray(d['keys']) ? d['keys'] : []
+  return { keys: keys.filter((k): k is string => typeof k === 'string').sort() }
 }
 
 export type MetadataBody = {
@@ -345,11 +532,14 @@ export type MetadataBody = {
 export async function readMetadata(
   cfg: VaultConfig,
   mount: string,
-  path: string
+  path: string,
+  /** Discovery passes a cap: a secret with a huge version history must not be buffered whole. */
+  maxBytes?: number
 ): Promise<MetadataBody | null> {
   const r = await vaultRequest(cfg, {
     method: 'GET',
-    path: `/v1/${encodePath(mount)}/metadata/${encodePath(path)}`
+    path: `/v1/${encodePath(mount)}/metadata/${encodePath(path)}`,
+    maxBytes
   })
   if (r.status === 404) return null
   const d = expectOk(r, 'metadata read')
@@ -443,7 +633,8 @@ export async function isWrappingToken(cfg: VaultConfig, token: string): Promise<
   const r = await vaultRequest(cfg, {
     method: 'POST',
     path: '/v1/sys/wrapping/lookup',
-    body: { token }
+    body: { token },
+    maxBytes: SIGN_IN_BYTES
   })
   return (
     r.status === 200 && Boolean((r.json?.['data'] as Record<string, unknown>)?.['creation_path'])
@@ -453,7 +644,7 @@ export async function isWrappingToken(cfg: VaultConfig, token: string): Promise<
 export async function unwrap(cfg: VaultConfig, wrappingToken: string): Promise<string> {
   const r = await vaultRequest(
     { ...cfg, token: wrappingToken },
-    { method: 'POST', path: '/v1/sys/wrapping/unwrap' }
+    { method: 'POST', path: '/v1/sys/wrapping/unwrap', maxBytes: SIGN_IN_BYTES }
   )
   if (r.status !== 200) throw new VaultHttpError(r.status, errorsOf(r), 'unwrap')
   const auth = r.json?.['auth'] as Record<string, unknown> | undefined

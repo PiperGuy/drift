@@ -44,21 +44,69 @@ export const ProjectCompareRequestSchema = z.object({
   left: ProjectSideSchema,
   right: ProjectSideSchema
 })
+/**
+ * A KV path as typed or picked: slashes trimmed, then every segment non-empty,
+ * not `.`/`..` and free of control characters, so nothing can step out of the
+ * mount once it is joined into /v1/<mount>/metadata/<path>.
+ */
+export const isVaultSegment = (seg: string): boolean =>
+  seg !== '' &&
+  seg !== '.' &&
+  seg !== '..' &&
+  seg.length <= 512 &&
+  !seg.includes('/') &&
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+  !/[\x00-\x1f\x7f]/.test(seg)
+export const isVaultPath = (p: string): boolean => p === '' || p.split('/').every(isVaultSegment)
+/** Mounts may be nested (`teams/payments`); same segment rules, never empty, bounded. */
+export const isVaultMount = (p: string): boolean => p !== '' && p.length <= 256 && isVaultPath(p)
+const vaultPath = (max: number): z.ZodType<string> =>
+  z
+    .string()
+    .max(max)
+    .transform((p) => p.trim().replace(/^\/+|\/+$/g, ''))
+    .refine(isVaultPath, 'Not a valid Vault path')
+const VaultAuthSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('token'), token: z.string().min(1).max(4096) }),
+  z.object({
+    kind: z.literal('approle'),
+    roleId: z.string().min(1).max(512),
+    secretId: z.string().min(1).max(4096)
+  })
+])
+const VaultSession = z.uuid()
 export const VaultSourceSpecSchema = z.object({
   name: z.string().max(60).default(''),
   address: z.string().min(1).max(2048),
   namespace: z.string().max(256).optional(),
   caPem: z.string().max(65536).optional(),
-  path: z.string().min(1).max(1024),
+  path: vaultPath(1024).refine((p) => p !== '', 'Give a KV v2 path'),
   auth: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('token'), token: z.string().min(1).max(4096) }),
-    z.object({
-      kind: z.literal('approle'),
-      roleId: z.string().min(1).max(512),
-      secretId: z.string().min(1).max(4096)
-    })
+    ...VaultAuthSchema.options,
+    z.object({ kind: z.literal('session'), session: VaultSession })
   ]),
   storage: z.enum(['session', 'keychain'])
+})
+export const VaultDiscoverSpecSchema = VaultSourceSpecSchema.pick({
+  address: true,
+  namespace: true,
+  caPem: true
+}).extend({ auth: VaultAuthSchema })
+const VaultMountSchema = vaultPath(256).refine(isVaultMount, 'Give a mount')
+export const VaultSessionSchema = VaultSession
+export const VaultDiscoverMountSchema = z.object({
+  session: VaultSession,
+  path: vaultPath(1024).refine((p) => p !== '', 'Give a mount, e.g. secret')
+})
+export const VaultDiscoverListSchema = z.object({
+  session: VaultSession,
+  mount: VaultMountSchema,
+  folder: vaultPath(1024)
+})
+export const VaultDiscoverVersionsSchema = z.object({
+  session: VaultSession,
+  mount: VaultMountSchema,
+  path: vaultPath(1024).refine((p) => p !== '', 'Give a secret path')
 })
 export const VaultPathSchema = z.object({ path: z.string().min(1) })
 export const VaultShapeAtSchema = z.object({

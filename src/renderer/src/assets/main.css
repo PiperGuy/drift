@@ -43,6 +43,13 @@
   --sidebar-accent-foreground: #0d0e10;
   --sidebar-border: #e2e4e8;
   --sidebar-ring: #6f9a00;
+  /* Shell layers (see "Liquid glass" below). Opaque everywhere by default. */
+  --shell: var(--sidebar);
+  --sheet: var(--background);
+  --float: var(--popover);
+  --edge-hi: rgb(255 255 255 / 0.75);
+  --sheet-edge: rgb(13 14 16 / 0.09);
+  --depth: rgb(13 14 16 / 0.14);
 }
 
 .dark {
@@ -80,6 +87,9 @@
   --sidebar-accent-foreground: #f2f3f4;
   --sidebar-border: #1d1f22;
   --sidebar-ring: #c8ff4d;
+  --edge-hi: rgb(255 255 255 / 0.07);
+  --sheet-edge: rgb(255 255 255 / 0.07);
+  --depth: rgb(0 0 0 / 0.55);
 }
 
 @theme inline {
@@ -319,6 +329,70 @@
   .press:active {
     translate: 0 1px;
   }
+}
+
+/* ---------- Liquid glass ----------
+   Apple's guidance: glass belongs to the navigation and control layer that floats
+   above content, never to the content itself, and never glass on glass. So:
+   - shell  — the window behind everything. On macOS this is real NSVisualEffectView
+              vibrancy (src/main/index.ts) tinted by --shell; the sidebar sits on it.
+   - sheet  — the content plane: always opaque, lifted off the shell by a hairline
+              edge, a top specular line and a soft shadow. Values, redaction dots
+              and status chips only ever render here or on an opaque card.
+   - float  — popovers, menus, dialogs, toasts: frosted with backdrop-filter.
+   Translucency is opt-in three times over: html[data-glass] (macOS only, set in
+   main.tsx), no reduced-transparency or increased-contrast preference, and
+   backdrop-filter support. Anything else, e.g. Linux, gets the opaque tokens above. */
+@media (prefers-reduced-transparency: no-preference) and (not (prefers-contrast: more)) {
+  html[data-glass='native'] {
+    --shell: color-mix(in srgb, var(--sidebar) 58%, transparent);
+    /* Hover and selection in the sidebar tint the glass instead of covering it. */
+    --sidebar-accent: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+  }
+  html[data-glass='native'] body {
+    background: transparent;
+  }
+  @supports (backdrop-filter: blur(1px)) {
+    html[data-glass='native'] {
+      --float: color-mix(in srgb, var(--popover) 80%, transparent);
+    }
+    html[data-glass='native'] .glass-float,
+    html[data-glass='native'] [data-sonner-toast] {
+      backdrop-filter: blur(24px) saturate(1.6);
+    }
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --sheet-edge: var(--foreground);
+    --edge-hi: transparent;
+  }
+}
+@media (forced-colors: active) {
+  .glass-sheet,
+  .glass-float {
+    border: 1px solid CanvasText;
+  }
+}
+
+@utility glass-shell {
+  background: var(--shell);
+}
+@utility glass-sheet {
+  background: var(--sheet);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px var(--sheet-edge),
+    inset 0 1px 0 var(--edge-hi),
+    0 1px 2px var(--depth),
+    0 12px 32px -16px var(--depth);
+}
+@utility glass-float {
+  background: var(--float);
+  box-shadow:
+    inset 0 1px 0 var(--edge-hi),
+    0 1px 2px var(--depth),
+    0 16px 40px -12px var(--depth);
 }
 
 @property --n {

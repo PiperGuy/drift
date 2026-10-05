@@ -56,6 +56,14 @@ test.describe('fresh boot', () => {
     expect(prefs.contextIsolation).toBe(true)
     expect(prefs.node).toBe(false)
 
+    // Off macOS the window is opaque: the glass fallback never shows through.
+    if (process.platform !== 'darwin') {
+      const bg = await electronApp.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].getBackgroundColor()
+      )
+      expect(bg.toLowerCase()).toBe('#08090a')
+    }
+
     // No workspace was granted: a scan of an arbitrary path must be refused.
     const refused = await window.evaluate(async () => {
       try {

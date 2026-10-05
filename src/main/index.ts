@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log/main'
@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { Channels } from '@shared/channels'
 import { e2eUserData } from './e2e'
+import { platformWindowOptions } from './window'
 
 // E2E runs get a throwaway userData; a no-op otherwise. Before the
 // single-instance lock and the logger, which both key on userData.
@@ -24,10 +25,8 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    // Sit the traffic lights in their own strip above the sidebar header (see App.tsx mt-7).
-    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
-    backgroundColor: '#08090a',
+    // Native glass on macOS, opaque everywhere else (see ./window).
+    ...platformWindowOptions(process.platform),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -61,6 +60,12 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// The vibrancy material follows the native appearance; keep it on the theme the
+// user picked in the app, not only the OS one, so tinted layers stay legible.
+ipcMain.on(Channels.windowTheme, (_e, theme: unknown) => {
+  if (theme === 'system' || theme === 'light' || theme === 'dark') nativeTheme.themeSource = theme
+})
 
 // One instance: a second launch (Windows/Linux shortcut while parked in the tray) just
 // surfaces the running one, instead of a duplicate tray and a second writer on the store.

@@ -51,6 +51,7 @@ import {
 import { applyPlan, formatFile, rollback, setValues } from './write'
 import {
   connectVault,
+  discoverVault,
   dropVaultTokens,
   forgetVaultConnection,
   registerVault,
@@ -59,12 +60,23 @@ import {
   vaultShapeAt
 } from './providers/vault'
 import {
+  discoverList,
+  discoverMount,
+  discoverVersions,
+  endDiscovery
+} from './providers/vault/discover'
+import {
   DockerHost,
   DockerSourceSpecSchema,
   EcsDiscoverSchema,
   ProjectCompareRequestSchema,
   ProviderConnectSpecSchema,
+  VaultDiscoverListSchema,
+  VaultDiscoverMountSchema,
+  VaultDiscoverSpecSchema,
+  VaultDiscoverVersionsSchema,
   VaultRestoreSchema,
+  VaultSessionSchema,
   VaultShapeAtSchema,
   VaultSourceSpecSchema
 } from '@shared/ipc'
@@ -275,6 +287,26 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return result
   })
 
+  // Browse Vault: metadata only, nothing granted or persisted until a pick is connected above.
+  ipcMain.handle(Channels.vaultDiscover, (_e, raw: unknown) =>
+    discoverVault(VaultDiscoverSpecSchema.parse(raw))
+  )
+  ipcMain.handle(Channels.vaultDiscoverMount, (_e, raw: unknown) => {
+    const { session, path } = VaultDiscoverMountSchema.parse(raw)
+    return discoverMount(session, path)
+  })
+  ipcMain.handle(Channels.vaultDiscoverList, (_e, raw: unknown) => {
+    const { session, mount, folder } = VaultDiscoverListSchema.parse(raw)
+    return discoverList(session, mount, folder)
+  })
+  ipcMain.handle(Channels.vaultDiscoverVersions, (_e, raw: unknown) => {
+    const { session, mount, path } = VaultDiscoverVersionsSchema.parse(raw)
+    return discoverVersions(session, mount, path)
+  })
+  ipcMain.handle(Channels.vaultDiscoverEnd, (_e, raw: unknown) => {
+    endDiscovery(VaultSessionSchema.parse(raw))
+  })
+
   ipcMain.handle(Channels.vaultHistory, (_e, raw: unknown) => {
     const path = RootPath.parse(raw)
     assertGranted(path)
@@ -372,6 +404,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     revokeRoots()
     const dropped = store.forgetAll()
     dropVaultTokens(dropped)
+    endDiscovery()
     dropSecrets(dropped)
     store.logEvent('forget', {})
   })
