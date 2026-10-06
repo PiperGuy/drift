@@ -6,6 +6,13 @@
 
 - remove license activation and trial gates; all Drift features are available without a key
 
+## [0.3.0](https://github.com/PiperGuy/drift/compare/v0.2.3...v0.3.0) (2026-10-05)
+
+
+### Features
+
+* **vault:** add safe KV v2 discovery browser ([b031d9f](https://github.com/PiperGuy/drift/commit/b031d9f6aabdb65b0f5766347d938db4ad4809fc))
+
 ## [0.2.3](https://github.com/PiperGuy/drift/compare/v0.2.2...v0.2.3) (2026-10-02)
 
 
