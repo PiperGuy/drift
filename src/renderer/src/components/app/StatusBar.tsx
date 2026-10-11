@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { Lock, WifiOff } from 'lucide-react'
 import { useWorkspace } from '@/store/workspace'
+import type { AppInfo } from '@shared/channels'
 
 /**
  * One honest line at the bottom of the window: what is granted, what was found,
@@ -11,6 +13,10 @@ export function StatusBar(): React.JSX.Element {
   const scan = useWorkspace((s) => s.scan)
   const scanning = useWorkspace((s) => s.scanning)
   const written = useWorkspace((s) => s.written)
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    window.plumbr.appInfo().then((info: AppInfo) => setVersion(info.version))
+  }, [])
   return (
     <footer
       className="flex h-7 shrink-0 items-center gap-4 border-t bg-sidebar px-3 font-mono text-[11px] text-muted-foreground"
@@ -35,6 +41,11 @@ export function StatusBar(): React.JSX.Element {
       >
         <WifiOff className="size-3" aria-hidden="true" /> {written} written · 0 sent
       </span>
+      {version && (
+        <span className="shrink-0" title="Installed version">
+          v{version}
+        </span>
+      )}
     </footer>
   )
 }
