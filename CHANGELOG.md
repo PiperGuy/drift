@@ -6,6 +6,13 @@
 
 - remove license activation and trial gates; all Drift features are available without a key
 
+## [0.4.0](https://github.com/PiperGuy/drift/compare/v0.3.0...v0.4.0) (2026-10-11)
+
+
+### Features
+
+* show installed version in status bar ([cee26a3](https://github.com/PiperGuy/drift/commit/cee26a3c296e51a7716e2ad01b199bf9726d0c77))
+
 ## [0.3.0](https://github.com/PiperGuy/drift/compare/v0.2.3...v0.3.0) (2026-10-05)
 
 
